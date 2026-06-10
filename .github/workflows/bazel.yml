@@ -822,6 +822,10 @@ jobs:
     # Side benefit: this lane now exercises the x64 Electron build that
     # `clients/desktop/electron-builder.yml` ships under `mac.target.x64`,
     # which the previous arm64-only lane never verified natively.
+    #
+    # Forks without the macmini-04 runner: set repo variable
+    # SKIP_DESKTOP_E2E=true so the job skips instead of queuing forever.
+    if: ${{ vars.SKIP_DESKTOP_E2E != 'true' }}
     runs-on: [self-hosted, macmini-04]
     timeout-minutes: 60
     needs: smoke
