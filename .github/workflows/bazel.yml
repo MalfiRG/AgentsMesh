@@ -538,6 +538,17 @@ jobs:
       AGENTSMESH_WORKTREE_NAME: head-shard${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v6
+
+      # GH-hosted ubuntu-latest has ~14 GB free — not enough for the Bazel
+      # output tree + Playwright browsers + dev stack (first hosted run died
+      # with ENOSPC mid-build). Reclaim ~25 GB of preinstalled toolchains.
+      - name: Free disk space (hosted runner only)
+        if: ${{ vars.WEB_E2E_RUNNER == 'hosted' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/share/powershell
+          df -h /
+
       - uses: bazel-contrib/setup-bazel@0.9.1
         with:
           bazelisk-cache: true
@@ -822,6 +833,10 @@ jobs:
     # Side benefit: this lane now exercises the x64 Electron build that
     # `clients/desktop/electron-builder.yml` ships under `mac.target.x64`,
     # which the previous arm64-only lane never verified natively.
+    #
+    # Forks without the macmini-04 runner: set repo variable
+    # SKIP_DESKTOP_E2E=true so the job skips instead of queuing forever.
+    if: ${{ vars.SKIP_DESKTOP_E2E != 'true' }}
     runs-on: [self-hosted, macmini-04]
     timeout-minutes: 60
     needs: smoke
