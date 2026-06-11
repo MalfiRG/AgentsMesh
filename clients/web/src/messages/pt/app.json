@@ -30,6 +30,10 @@
     }
   },
   "mesh": {
+    "connect": {
+      "success": "Conexão de pods criada",
+      "error": "Falha ao conectar os pods"
+    },
     "title": "AgentsMesh",
     "channels": "Canais",
     "newChannel": "Novo Canal",

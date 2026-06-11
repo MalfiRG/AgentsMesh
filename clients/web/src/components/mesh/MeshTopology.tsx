@@ -15,6 +15,7 @@ import BindingEdge from "./BindingEdge";
 import RunnerGroupNode from "./RunnerGroupNode";
 import { useMeshStore, useTopology, type MeshNode } from "@/stores/mesh";
 import { calculateGroupedLayout } from "./mesh-layout";
+import { useMeshConnect } from "./useMeshConnect";
 
 const nodeTypes: NodeTypes = { pod: PodNode, runnerGroup: RunnerGroupNode };
 const edgeTypes: EdgeTypes = { binding: BindingEdge };
@@ -22,6 +23,7 @@ const edgeTypes: EdgeTypes = { binding: BindingEdge };
 export default function MeshTopology() {
   const topology = useTopology();
   const { selectedNode, selectNode, fetchTopology, updateNodePosition } = useMeshStore();
+  const onConnect = useMeshConnect();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -82,7 +84,7 @@ export default function MeshTopology() {
   return (
     <div className="w-full h-full">
       <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick} onNodeDragStop={onNodeDragStop} onPaneClick={onPaneClick}
+        onNodeClick={onNodeClick} onNodeDragStop={onNodeDragStop} onPaneClick={onPaneClick} onConnect={onConnect}
         nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView minZoom={0.1} maxZoom={2}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}>
         <Controls />
