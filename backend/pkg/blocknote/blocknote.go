@@ -57,6 +57,51 @@ func ToPlainText(jsonStr string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// EnsureAST is the normalization boundary for untrusted content sources.
+// The Block Store stores ticket/document content as a BlockNote AST (a JSON
+// array of blocks), but non-web callers (MCP tools, the public API, agents)
+// naturally send plain text or markdown. Persisting those verbatim makes the
+// AST parser fail downstream and surfaces as a 500. EnsureAST returns s
+// unchanged when it already parses as a block array, and otherwise wraps it
+// as plain text via FromPlainText.
+func EnsureAST(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" || t == "null" || t == "[]" {
+		return s
+	}
+	var blocks []Block
+	if err := json.Unmarshal([]byte(t), &blocks); err == nil {
+		return s
+	}
+	return FromPlainText(s)
+}
+
+// FromPlainText wraps raw text into a minimal BlockNote document: one
+// paragraph block per line, with blank lines becoming empty paragraphs.
+func FromPlainText(text string) string {
+	lines := strings.Split(text, "\n")
+	blocks := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		content := []map[string]any{}
+		if line != "" {
+			content = []map[string]any{
+				{"type": "text", "text": line, "styles": map[string]any{}},
+			}
+		}
+		blocks = append(blocks, map[string]any{
+			"type":    "paragraph",
+			"props":   map[string]any{},
+			"content": content,
+		})
+	}
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return "[]"
+	}
+	return string(out)
+}
+
 func renderBlocks(b *strings.Builder, blocks []Block, depth int) {
 	for i, block := range blocks {
 		renderBlock(b, block, depth, i)
