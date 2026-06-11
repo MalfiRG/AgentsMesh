@@ -66,8 +66,12 @@ test.describe("Full E2E Scenario", () => {
       const runnerCheck = await cc.runner.getRunner({ orgSlug: TEST_ORG_SLUG, id: runners[0].id }) as { runner: Runner };
       expect((runnerCheck.runner?.currentPods ?? 0)).toBeGreaterThanOrEqual(0);
 
-      // Step 8: Terminate pod
-      await cc.pod.terminatePod({ orgSlug: TEST_ORG_SLUG, podKey });
+      // Step 8: Terminate pod (the short-lived e2e-echo pod may have
+      // finished on its own first — treat the terminate race as success)
+      await cc.pod.terminatePod({ orgSlug: TEST_ORG_SLUG, podKey }).catch((e) => {
+        const err = e as { status?: number };
+        expect([400, 409]).toContain(err.status);
+      });
     }
 
     // Step 9: Cleanup ticket
