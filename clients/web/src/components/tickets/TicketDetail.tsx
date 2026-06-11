@@ -6,13 +6,16 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useCurrentOrg, useAuthStore } from "@/stores/auth";
-import { useTicketStore, useCurrentTicket, TicketStatus } from "@/stores/ticket";
+import { useTicketStore, useCurrentTicket, TicketStatus, TicketPriority } from "@/stores/ticket";
 import { useTicketExtraData } from "./hooks";
 import { LabelsList, CommentsList, SubTicketsList, RelationsList, CommitsList } from "./shared";
 import { TicketDetailSidebar } from "./TicketDetailSidebar";
 import { TicketHeaderActions } from "./TicketHeaderActions";
 import { InlineEditableText, InlineEditableTextHandle } from "./InlineEditableText";
 import { StatusSelect } from "./StatusSelect";
+import { PrioritySelect } from "./PrioritySelect";
+import { RepositoryInlineSelect } from "./RepositoryInlineSelect";
+import { TicketDetailSkeleton } from "./TicketDetailSkeleton";
 
 const BlockEditor = lazy(() => import("@/components/ui/block-editor"));
 
@@ -37,7 +40,7 @@ export function TicketDetail({ slug }: TicketDetailProps) {
   const initialLoading = loadedSlug !== slug;
 
   const { dialogProps, confirm } = useConfirmDialog();
-  const { subTickets, relations, commits, comments, addComment, updateComment, deleteComment } = useTicketExtraData(slug, !!currentTicket);
+  const { subTickets, relations, commits, comments, refetch, addComment, updateComment, deleteComment } = useTicketExtraData(slug, !!currentTicket);
 
   const contentSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const titleEditRef = useRef<InlineEditableTextHandle>(null);
@@ -83,6 +86,14 @@ export function TicketDetail({ slug }: TicketDetailProps) {
       await updateTicketStatus(slug, newStatus);
     } catch (err) {
       console.error("Failed to update status:", err);
+    }
+  };
+
+  const handlePriorityChange = async (newPriority: TicketPriority) => {
+    try {
+      await updateTicket(slug, { priority: newPriority });
+    } catch (err) {
+      console.error("Failed to update priority:", err);
     }
   };
 
@@ -155,22 +166,24 @@ export function TicketDetail({ slug }: TicketDetailProps) {
               />
 
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-                {currentTicket.repository && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground">{t("tickets.detail.repository")}</span>
-                    <span className="font-mono font-medium text-foreground">
-                      {currentTicket.repository.name}
-                    </span>
-                  </div>
-                )}
-                {currentTicket.priority && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground">{t("tickets.detail.priority")}</span>
-                    <span className="font-medium text-foreground">
-                      {t(`tickets.priority.${currentTicket.priority}`)}
-                    </span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">{t("tickets.detail.repository")}</span>
+                  <RepositoryInlineSelect
+                    value={currentTicket.repository_id ?? null}
+                    currentName={currentTicket.repository?.name}
+                    onChange={handleRepositoryChange}
+                    size="sm"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">{t("tickets.detail.priority")}</span>
+                  <PrioritySelect
+                    value={currentTicket.priority || "none"}
+                    onChange={handlePriorityChange}
+                    showLabel
+                    size="sm"
+                  />
+                </div>
                 {currentTicket.due_date && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground">{t("tickets.detail.dueDate")}</span>
@@ -231,6 +244,7 @@ export function TicketDetail({ slug }: TicketDetailProps) {
         relations={relations}
         commits={commits}
         t={t}
+        onSubTicketCreated={refetch}
         commentsSlot={
           <div className="lg:hidden">
             <CommentsList
@@ -244,37 +258,6 @@ export function TicketDetail({ slug }: TicketDetailProps) {
       />
 
       <ConfirmDialog {...dialogProps} />
-    </div>
-  );
-}
-
-function TicketDetailSkeleton() {
-  return (
-    <div className="animate-pulse" data-testid="ticket-detail-skeleton">
-      <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
-        <div className="flex-1 space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="h-5 w-20 bg-muted/60 rounded" />
-              <div className="h-5 w-24 bg-muted/60 rounded-full" />
-            </div>
-            <div className="h-8 bg-muted/60 rounded-lg w-3/4" />
-          </div>
-          <div className="h-10 bg-muted/40 rounded-lg w-full" />
-          <div className="h-64 bg-muted/40 rounded-xl" />
-        </div>
-        <div className="lg:w-72 shrink-0 space-y-3">
-          <div className="h-[52px] bg-muted/50 rounded-xl" />
-          <div className="rounded-xl border border-border/40 overflow-hidden">
-            <div className="h-12 bg-muted/30" />
-            <div className="h-12 bg-muted/20" />
-            <div className="h-12 bg-muted/30" />
-            <div className="h-16 bg-muted/20" />
-            <div className="h-10 bg-muted/30" />
-          </div>
-          <div className="h-9 bg-muted/30 rounded-lg" />
-        </div>
-      </div>
     </div>
   );
 }

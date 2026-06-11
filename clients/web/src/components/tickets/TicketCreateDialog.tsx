@@ -30,6 +30,7 @@ export interface TicketCreateDialogProps {
   onOpenChange: (open: boolean) => void;
   onCreated?: (ticketId: number, slug: string) => void;
   parentTicketSlug?: string;
+  defaultRepositoryId?: number | null;
 }
 
 interface FormData {
@@ -45,6 +46,7 @@ export function TicketCreateDialog({
   onOpenChange,
   onCreated,
   parentTicketSlug,
+  defaultRepositoryId = null,
 }: TicketCreateDialogProps) {
   const t = useTranslations();
   const { isMobile } = useBreakpoint();
@@ -86,11 +88,11 @@ export function TicketCreateDialog({
       title: "",
       content: "",
       priority: "medium",
-      repositoryId: null,
+      repositoryId: defaultRepositoryId,
       assigneeIds: [],
     });
     setError(null);
-  }, []);
+  }, [defaultRepositoryId]);
 
   const handleClose = useCallback(() => {
     onOpenChange(false);

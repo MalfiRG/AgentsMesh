@@ -89,6 +89,14 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 
+vi.mock('@/stores/repository', () => ({
+  useRepositories: () => [],
+  useRepositoryStore: (selector?: (s: Record<string, unknown>) => unknown) => {
+    const state = { fetchRepositories: vi.fn(), isLoading: false, error: null }
+    return selector ? selector(state) : state
+  },
+}))
+
 vi.mock('@/components/ide/CreatePodModal', () => ({
   CreatePodModal: () => null,
 }))

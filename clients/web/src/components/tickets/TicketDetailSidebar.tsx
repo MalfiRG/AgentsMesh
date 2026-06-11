@@ -1,17 +1,18 @@
 "use client";
 
-import Link from "next/link";
 import { Ticket } from "@/stores/ticket";
 import type { TicketRelation } from "@/lib/viewModels/ticket";
-import { useCurrentOrg, useAuthStore } from "@/stores/auth";
+import { useCurrentOrg } from "@/stores/auth";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Circle, GitPullRequest, Clock, Terminal } from "lucide-react";
+import { GitPullRequest, Clock, Terminal } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTicketPods } from "@/hooks/useTicketPods";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { getShortPodKey } from "@/lib/pod-display-name";
 import { AgentStatusBadge } from "@/components/shared/AgentStatusBadge";
 import { SpawnPodButton } from "./SpawnPodButton";
+import { RailSection, RailEmpty } from "./TicketRailSection";
+import { SubTicketsRail } from "./SubTicketsRail";
 
 interface TicketDetailSidebarProps {
   ticket: Ticket;
@@ -28,6 +29,7 @@ interface TicketDetailSidebarProps {
   }>;
   t: (key: string, params?: Record<string, string | number>) => string;
   commentsSlot?: React.ReactNode;
+  onSubTicketCreated?: () => void;
 }
 
 export function TicketDetailSidebar({
@@ -38,6 +40,7 @@ export function TicketDetailSidebar({
   commits = [],
   t,
   commentsSlot,
+  onSubTicketCreated,
 }: TicketDetailSidebarProps) {
   const router = useRouter();
   const currentOrg = useCurrentOrg();
@@ -100,46 +103,13 @@ export function TicketDetailSidebar({
         )}
       </RailSection>
 
-      <RailSection title={t("tickets.rail.subTickets")} count={subTickets.length}>
-        {subTickets.length === 0 ? (
-          <RailEmpty icon={<Circle className="h-4 w-4" />} text={t("tickets.rail.noSubTickets")} />
-        ) : (
-          <ul className="space-y-1">
-            {subTickets.map((st) => {
-              const isDone = st.status === "done";
-              return (
-                <li key={st.slug}>
-                  <Link
-                    href={`/${currentOrg?.slug}/tickets/${st.slug}`}
-                    className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
-                  >
-                    {isDone ? (
-                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-success" />
-                    ) : (
-                      <Circle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {st.slug}
-                        </span>
-                      </div>
-                      <div
-                        className={cn(
-                          "truncate text-[12px]",
-                          isDone ? "text-muted-foreground line-through" : "text-foreground",
-                        )}
-                      >
-                        {st.title}
-                      </div>
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </RailSection>
+      <SubTicketsRail
+        parentSlug={ticketSlug}
+        parentRepositoryId={ticket.repository_id}
+        subTickets={subTickets}
+        onCreated={() => onSubTicketCreated?.()}
+        t={t}
+      />
 
       <RailSection title={t("tickets.rail.pullRequests")} count={commits.length}>
         {commits.length === 0 ? (
@@ -180,39 +150,6 @@ export function TicketDetailSidebar({
 
       {commentsSlot}
     </aside>
-  );
-}
-
-function RailSection({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-md border border-border bg-card">
-      <header className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {title}
-        </span>
-        {typeof count === "number" && count > 0 && (
-          <span className="font-mono text-[11px] text-muted-foreground">{count}</span>
-        )}
-      </header>
-      <div className="p-2">{children}</div>
-    </section>
-  );
-}
-
-function RailEmpty({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <div className="flex items-center gap-2 px-2 py-3 text-[12px] text-muted-foreground/70">
-      {icon}
-      <span>{text}</span>
-    </div>
   );
 }
 

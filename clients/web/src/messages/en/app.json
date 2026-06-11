@@ -145,6 +145,7 @@
       "noPods": "No active pods",
       "subTickets": "Sub-tickets",
       "noSubTickets": "No sub-tickets",
+      "addSubTicket": "Add sub-ticket",
       "pullRequests": "Pull Requests",
       "noPRs": "No PRs linked",
       "activity": "Activity",
