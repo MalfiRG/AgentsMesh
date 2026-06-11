@@ -2,7 +2,9 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +43,7 @@ func TestCheckQuotaExceeded(t *testing.T) {
 	}
 
 	err := service.CheckQuota(ctx, 1, "users", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -130,7 +132,7 @@ func TestCheckQuotaRunners(t *testing.T) {
 
 	// Should fail to add another
 	err := service.CheckQuota(ctx, 1, "runners", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -150,7 +152,7 @@ func TestCheckQuotaConcurrentPods(t *testing.T) {
 
 	// Should fail to add another
 	err := service.CheckQuota(ctx, 1, "concurrent_pods", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -170,7 +172,7 @@ func TestCheckQuotaRepositories(t *testing.T) {
 
 	// Should fail to add another
 	err := service.CheckQuota(ctx, 1, "repositories", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -190,7 +192,7 @@ func TestCheckQuotaWithCustomQuotaExceeded(t *testing.T) {
 
 	// Should fail to add another (quota is 2)
 	err := service.CheckQuota(ctx, 1, "users", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -208,7 +210,7 @@ func TestCheckQuotaPodMinutes(t *testing.T) {
 
 	// Should fail to use more
 	err := service.CheckQuota(ctx, 1, "pod_minutes", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -299,5 +301,46 @@ func TestSetCustomQuotaNoSubscription(t *testing.T) {
 	err := service.SetCustomQuota(ctx, 999, "users", 100)
 	if err != ErrSubscriptionNotFound {
 		t.Errorf("expected ErrSubscriptionNotFound, got %v", err)
+	}
+}
+
+func TestCheckQuotaExceededMessageIncludesDetail(t *testing.T) {
+	db := setupTestDB(t)
+	service := NewService(newTestRepo(db), "")
+	ctx := context.Background()
+
+	seedTestPlan(t, db) // max_concurrent_pods = 5
+	service.CreateSubscription(ctx, 1, "based")
+	for i := 0; i < 5; i++ {
+		db.Exec("INSERT INTO pods (organization_id, pod_key, status) VALUES (1, ?, 'running')", fmt.Sprintf("pod-%d", i))
+	}
+
+	err := service.CheckQuota(ctx, 1, "concurrent_pods", 1)
+	if !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("expected ErrQuotaExceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "concurrent pod limit reached (5 of 5 in use)") {
+		t.Errorf("expected detailed message, got %q", err.Error())
+	}
+}
+
+func TestCheckQuotaCustomQuotaExceededMessageIncludesDetail(t *testing.T) {
+	db := setupTestDB(t)
+	service := NewService(newTestRepo(db), "")
+	ctx := context.Background()
+
+	seedTestPlan(t, db)
+	service.CreateSubscription(ctx, 1, "based")
+	service.SetCustomQuota(ctx, 1, "concurrent_pods", 6)
+	for i := 0; i < 6; i++ {
+		db.Exec("INSERT INTO pods (organization_id, pod_key, status) VALUES (1, ?, 'running')", fmt.Sprintf("pod-%d", i))
+	}
+
+	err := service.CheckQuota(ctx, 1, "concurrent_pods", 1)
+	if !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("expected ErrQuotaExceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "concurrent pod limit reached (6 of 6 in use)") {
+		t.Errorf("expected detailed message, got %q", err.Error())
 	}
 }

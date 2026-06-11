@@ -83,3 +83,28 @@ func TestGetBillingOverviewWithNilPlan(t *testing.T) {
 		t.Error("expected plan to be loaded")
 	}
 }
+
+func TestGetBillingOverviewReflectsCustomQuotas(t *testing.T) {
+	db := setupTestDB(t)
+	service := NewService(newTestRepo(db), "")
+	ctx := context.Background()
+
+	seedTestPlan(t, db) // max_concurrent_pods = 5, max_runners = 1, max_users = 1
+	service.CreateSubscription(ctx, 1, "based")
+	service.SetCustomQuota(ctx, 1, "concurrent_pods", 50)
+	service.SetCustomQuota(ctx, 1, "runners", 2)
+
+	overview, err := service.GetBillingOverview(ctx, 1)
+	if err != nil {
+		t.Fatalf("failed to get billing overview: %v", err)
+	}
+	if overview.Usage.MaxConcurrentPods != 50 {
+		t.Errorf("expected custom concurrent_pods limit 50, got %d", overview.Usage.MaxConcurrentPods)
+	}
+	if overview.Usage.MaxRunners != 2 {
+		t.Errorf("expected custom runners limit 2, got %d", overview.Usage.MaxRunners)
+	}
+	if overview.Usage.MaxUsers != 1 {
+		t.Errorf("expected plan users limit 1, got %d", overview.Usage.MaxUsers)
+	}
+}

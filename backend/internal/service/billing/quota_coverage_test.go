@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -182,7 +183,7 @@ func TestCheckQuota_WithExistingUsage(t *testing.T) {
 
 	// Check if we can use 200 more minutes (should fail: 900 + 200 = 1100 > 1000)
 	err = svc.CheckQuota(context.Background(), 1, "pod_minutes", 200)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }

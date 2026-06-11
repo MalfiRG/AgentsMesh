@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { PodData, AgentData, RepositoryData } from "@/lib/api";
+import { useTranslations } from "next-intl";
+import { PodData, AgentData, RepositoryData, isApiErrorCode, getLocalizedErrorMessage } from "@/lib/api";
 import { usePodCreationStore } from "@/stores/podCreation";
 import { buildAgentfileLayer } from "@/lib/agentfile-layer";
 import { POD_MODE_PTY } from "@/lib/pod-modes";
@@ -29,6 +30,7 @@ export function useCreatePodForm(
   configValues?: Record<string, unknown>,
   overrides?: { repositoryId?: number | null },
 ): CreatePodFormState {
+  const t = useTranslations();
   const { setLastChoices } = usePodCreationStore();
 
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -201,7 +203,9 @@ export function useCreatePodForm(
         }
         return result?.pod ?? null;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to create pod";
+        const message = isApiErrorCode(err, "resource_exhausted")
+          ? t("apiErrors.CONCURRENT_POD_QUOTA_EXCEEDED")
+          : getLocalizedErrorMessage(err, t, t("apiErrors.INTERNAL_ERROR"));
         setError(message);
         console.error("Failed to create pod:", err);
         return null;
@@ -212,7 +216,7 @@ export function useCreatePodForm(
     [
       selectedAgent, selectedRepository, selectedBranch,
       bundles.selectedCredentialName, bundles.selectedRuntimeBundleNames,
-      alias, perpetual, agentfileLayer, onSuccess, validate, setLastChoices,
+      alias, perpetual, agentfileLayer, onSuccess, validate, setLastChoices, t,
     ]
   );
 

@@ -62,15 +62,15 @@ func (s *Service) GetBillingOverview(ctx context.Context, orgID int64) (*Billing
 		CancelAtPeriodEnd:  sub.CancelAtPeriodEnd,
 		Usage: UsageOverview{
 			PodMinutes:         podMinutes,
-			IncludedPodMinutes: float64(plan.IncludedPodMinutes),
+			IncludedPodMinutes: float64(EffectiveLimit(sub, "pod_minutes", plan.IncludedPodMinutes)),
 			Users:              int(userCount),
-			MaxUsers:           plan.MaxUsers,
+			MaxUsers:           EffectiveLimit(sub, "users", plan.MaxUsers),
 			Runners:            int(runnerCount),
-			MaxRunners:         plan.MaxRunners,
+			MaxRunners:         EffectiveLimit(sub, "runners", plan.MaxRunners),
 			ConcurrentPods:     int(concurrentPodCount),
-			MaxConcurrentPods:  plan.MaxConcurrentPods,
+			MaxConcurrentPods:  EffectiveLimit(sub, "concurrent_pods", plan.MaxConcurrentPods),
 			Repositories:       int(repoCount),
-			MaxRepositories:    plan.MaxRepositories,
+			MaxRepositories:    EffectiveLimit(sub, "repositories", plan.MaxRepositories),
 		},
 	}, nil
 }

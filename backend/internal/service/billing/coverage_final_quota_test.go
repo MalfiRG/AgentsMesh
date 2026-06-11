@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestCheckQuota_WithCustomQuota(t *testing.T) {
 
 	// Should fail when exceeding custom quota
 	err = svc.CheckQuota(context.Background(), 1, "users", 15)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -117,7 +118,7 @@ func TestCheckQuota_QuotaExceeded(t *testing.T) {
 	db.Exec("INSERT INTO organization_members (organization_id, user_id, role) VALUES (1, 1, 'owner')")
 
 	err := svc.CheckQuota(context.Background(), 1, "users", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -199,7 +200,7 @@ func TestGetCurrentResourceCount_AllTypes(t *testing.T) {
 	resources := []string{"users", "runners", "concurrent_pods", "repositories", "pod_minutes"}
 	for _, resource := range resources {
 		err := svc.CheckQuota(context.Background(), 1, resource, 1)
-		if err != nil && err != ErrQuotaExceeded {
+		if err != nil && !errors.Is(err, ErrQuotaExceeded) {
 			t.Errorf("unexpected error for resource %s: %v", resource, err)
 		}
 	}

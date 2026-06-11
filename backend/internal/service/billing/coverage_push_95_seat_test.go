@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestCheckSeatAvailability_WithMembers(t *testing.T) {
 
 	// Should fail when requesting more than available
 	err = svc.CheckSeatAvailability(context.Background(), 1, 2)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded for 2 seats, got %v", err)
 	}
 }
@@ -56,7 +57,7 @@ func TestCheckSeatAvailability_NoSubscription(t *testing.T) {
 
 	// More than 1 should fail
 	err = svc.CheckSeatAvailability(context.Background(), 999, 2)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }

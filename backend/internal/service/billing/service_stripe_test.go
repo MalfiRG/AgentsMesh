@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -112,7 +113,7 @@ func TestCheckQuota_NoSubscription_FallsBackToBasedPlan(t *testing.T) {
 
 	// But requesting more than max should fail
 	err = svc.CheckQuota(context.Background(), 999, "users", 2)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
