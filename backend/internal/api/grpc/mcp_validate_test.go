@@ -17,7 +17,7 @@ func TestMcpCreatePod_RejectsDotInAgentSlug(t *testing.T) {
 	tc := &middleware.TenantContext{OrganizationID: 1, UserID: 1}
 	payload := []byte(`{"agent_slug":"my.bad.agent","runner_id":1}`)
 
-	_, mcpErr := a.mcpCreatePod(context.Background(), tc, payload)
+	_, mcpErr := a.mcpCreatePod(context.Background(), tc, "1-standalone-caller01", payload)
 	if mcpErr == nil {
 		t.Fatal("expected mcpError for slug with dot")
 	}
@@ -31,7 +31,7 @@ func TestMcpCreatePod_RejectsEmptyAgentSlug(t *testing.T) {
 	tc := &middleware.TenantContext{OrganizationID: 1, UserID: 1}
 	payload := []byte(`{"agent_slug":"","runner_id":1}`)
 
-	_, mcpErr := a.mcpCreatePod(context.Background(), tc, payload)
+	_, mcpErr := a.mcpCreatePod(context.Background(), tc, "1-standalone-caller01", payload)
 	if mcpErr == nil || mcpErr.code != 400 {
 		t.Fatalf("expected 400 for empty agent_slug, got %v", mcpErr)
 	}
