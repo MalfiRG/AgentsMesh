@@ -82,9 +82,13 @@ func mapServiceError(err error) error {
 
 	// Runner unavailability → Unavailable
 	case errors.Is(err, agentpod.ErrNoAvailableRunner),
-		errors.Is(err, agentpod.ErrRunnerDispatchFailed),
-		errors.Is(err, runner.ErrPodAlreadyTerminated):
+		errors.Is(err, agentpod.ErrRunnerDispatchFailed):
 		return connect.NewError(connect.CodeUnavailable, err)
+
+	// Terminate race (pod finished before the request) → Aborted (HTTP 409),
+	// matching the REST handler's 4xx treatment of the same error.
+	case errors.Is(err, runner.ErrPodAlreadyTerminated):
+		return connect.NewError(connect.CodeAborted, err)
 
 	// Config build failure → Internal
 	case errors.Is(err, agentpod.ErrConfigBuildFailed):

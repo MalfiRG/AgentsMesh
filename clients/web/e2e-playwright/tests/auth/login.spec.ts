@@ -31,9 +31,10 @@ test.describe("Login Flow", () => {
 
     // Post-login navigateAfterLogin blocks on resolvePostLoginUrlLight →
     // fetchFirstOrgSlug (a network round-trip) before router.push; under a
-    // loaded CI shard that org fetch is slow, so allow generous headroom.
+    // loaded CI shard that org fetch is slow, so allow generous headroom
+    // (30s was exceeded on shared-CPU GH-hosted runners).
     await page.waitForURL((url) => !url.pathname.includes("/login"), {
-      timeout: 30_000,
+      timeout: 60_000,
     });
 
     // Should land on workspace or dashboard
