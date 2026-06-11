@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 
+	channelDomain "github.com/anthropics/agentsmesh/backend/internal/domain/channel"
 	"github.com/anthropics/agentsmesh/backend/internal/middleware"
 	"github.com/anthropics/agentsmesh/backend/internal/service/runner"
 )
@@ -13,7 +14,7 @@ type PodRouterForMCP interface {
 	ObservePod(ctx context.Context, podKey string, lines int32, includeScreen bool) (*runner.ObservePodResult, error)
 }
 
-func (a *GRPCRunnerAdapter) mcpGetPodSnapshot(ctx context.Context, tc *middleware.TenantContext, payload []byte) (interface{}, *mcpError) {
+func (a *GRPCRunnerAdapter) mcpGetPodSnapshot(ctx context.Context, tc *middleware.TenantContext, callerPod string, payload []byte) (interface{}, *mcpError) {
 	var params struct {
 		PodKey        string `json:"pod_key"`
 		Lines         int32  `json:"lines"`
@@ -33,6 +34,9 @@ func (a *GRPCRunnerAdapter) mcpGetPodSnapshot(ctx context.Context, tc *middlewar
 	}
 	if pod.OrganizationID != tc.OrganizationID {
 		return nil, newMcpError(403, "access denied")
+	}
+	if mcpErr := a.requirePodBinding(ctx, callerPod, params.PodKey, channelDomain.BindingScopePodRead); mcpErr != nil {
+		return nil, mcpErr
 	}
 
 	if a.podRouter == nil {
@@ -72,7 +76,7 @@ func (a *GRPCRunnerAdapter) mcpGetPodSnapshot(ctx context.Context, tc *middlewar
 	return response, nil
 }
 
-func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.TenantContext, payload []byte) (interface{}, *mcpError) {
+func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.TenantContext, callerPod string, payload []byte) (interface{}, *mcpError) {
 	var params struct {
 		PodKey string   `json:"pod_key"`
 		Text   string   `json:"text"`
@@ -96,6 +100,9 @@ func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.
 	if pod.OrganizationID != tc.OrganizationID {
 		return nil, newMcpError(403, "access denied")
 	}
+	if mcpErr := a.requirePodBinding(ctx, callerPod, params.PodKey, channelDomain.BindingScopePodWrite); mcpErr != nil {
+		return nil, mcpErr
+	}
 
 	if a.podRouter == nil {
 		return nil, newMcpError(503, "pod router not available")
@@ -115,6 +122,28 @@ func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.
 	}
 
 	return map[string]interface{}{"message": "input sent"}, nil
+}
+
+// requirePodBinding enforces the mesh isolation model documented in
+// design/research/product-model.md: pods cannot observe or control each other
+// by default — cross-pod access needs an active PodBinding granting the
+// matching scope (pod:read for snapshots, pod:write for input). A pod may
+// always act on itself. Same-org ownership alone is not sufficient.
+func (a *GRPCRunnerAdapter) requirePodBinding(ctx context.Context, callerPod, targetPod, scope string) *mcpError {
+	if callerPod == "" {
+		return newMcpError(403, "caller pod is unknown")
+	}
+	if callerPod == targetPod {
+		return nil
+	}
+	ok, err := a.bindingService.HasScope(ctx, callerPod, targetPod, scope)
+	if err != nil {
+		return newMcpErrorf(500, "failed to check pod binding: %v", err)
+	}
+	if !ok {
+		return newMcpErrorf(403, "access denied: no active binding grants %s on pod %s (use request_binding)", scope, targetPod)
+	}
+	return nil
 }
 
 func convertKeyToInput(key string) string {

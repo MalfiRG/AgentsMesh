@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	channelDomain "github.com/anthropics/agentsmesh/backend/internal/domain/channel"
 	"github.com/anthropics/agentsmesh/backend/internal/middleware"
 	"github.com/anthropics/agentsmesh/backend/internal/service/agentpod"
 	"github.com/anthropics/agentsmesh/backend/pkg/slugkit"
@@ -16,7 +17,7 @@ import (
 // `agentfile_layer` is the SSOT for everything Pod-specific (MODE, CONFIG, REPO,
 // USE_ENV_BUNDLE, …). `repository_id` is kept as a separate platform-level ID
 // reference that can't be expressed inside the AgentFile.
-func (a *GRPCRunnerAdapter) mcpCreatePod(ctx context.Context, tc *middleware.TenantContext, payload []byte) (interface{}, *mcpError) {
+func (a *GRPCRunnerAdapter) mcpCreatePod(ctx context.Context, tc *middleware.TenantContext, callerPod string, payload []byte) (interface{}, *mcpError) {
 	var params struct {
 		AgentSlug          string  `json:"agent_slug"`
 		RunnerID           int64   `json:"runner_id"`
@@ -57,6 +58,8 @@ func (a *GRPCRunnerAdapter) mcpCreatePod(ctx context.Context, tc *middleware.Ten
 		return nil, mapOrchestratorErrorToMCP(err)
 	}
 
+	a.seedCreatorBinding(ctx, tc.OrganizationID, callerPod, result.Pod.PodKey)
+
 	resp := map[string]interface{}{
 		"pod": map[string]interface{}{
 			"pod_key": result.Pod.PodKey,
@@ -68,6 +71,24 @@ func (a *GRPCRunnerAdapter) mcpCreatePod(ctx context.Context, tc *middleware.Ten
 	}
 
 	return resp, nil
+}
+
+// seedCreatorBinding grants the creating pod an active read+write binding to
+// the pod it just created, so the delegation flow (create_pod → send_pod_input)
+// keeps working under mesh binding enforcement (requirePodBinding). The
+// same_user_auto policy activates the binding immediately because both pods
+// belong to the same user. Best-effort: a failure must not fail pod creation —
+// the creator can still request_binding manually.
+func (a *GRPCRunnerAdapter) seedCreatorBinding(ctx context.Context, orgID int64, creatorPod, newPodKey string) {
+	if creatorPod == "" || creatorPod == newPodKey {
+		return
+	}
+	if _, err := a.bindingService.RequestBinding(ctx, orgID, creatorPod, newPodKey,
+		[]string{channelDomain.BindingScopePodRead, channelDomain.BindingScopePodWrite},
+		channelDomain.BindingPolicySameUserAuto); err != nil {
+		a.logger.Warn("failed to seed creator pod binding",
+			"creator_pod", creatorPod, "new_pod", newPodKey, "error", err)
+	}
 }
 
 // mapOrchestratorErrorToMCP maps PodOrchestrator errors to MCP error responses.

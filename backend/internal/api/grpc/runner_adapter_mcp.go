@@ -91,9 +91,9 @@ func (a *GRPCRunnerAdapter) dispatchMcpMethod(ctx context.Context, tc *middlewar
 		return a.mcpDeleteTicket(ctx, tc, req.Payload)
 
 	case "get_pod_snapshot":
-		return a.mcpGetPodSnapshot(ctx, tc, req.Payload)
+		return a.mcpGetPodSnapshot(ctx, tc, req.PodKey, req.Payload)
 	case "send_pod_input":
-		return a.mcpSendPodInput(ctx, tc, req.Payload)
+		return a.mcpSendPodInput(ctx, tc, req.PodKey, req.Payload)
 
 	case "list_available_pods":
 		return a.mcpListAvailablePods(ctx, tc)
@@ -103,7 +103,7 @@ func (a *GRPCRunnerAdapter) dispatchMcpMethod(ctx context.Context, tc *middlewar
 		return a.mcpListRepositories(ctx, tc)
 
 	case "create_pod":
-		return a.mcpCreatePod(ctx, tc, req.Payload)
+		return a.mcpCreatePod(ctx, tc, req.PodKey, req.Payload)
 
 	case "list_loops":
 		return a.mcpListLoops(ctx, tc, req.Payload)
