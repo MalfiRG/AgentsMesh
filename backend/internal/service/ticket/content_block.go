@@ -30,6 +30,7 @@ func (s *Service) writeContentBlock(
 	if s.blockstore == nil {
 		return uuid.Nil, fmt.Errorf("blockstore not configured")
 	}
+	blocknoteJSON = bnpkg.EnsureAST(blocknoteJSON)
 	if !hasRichContent(blocknoteJSON) {
 		return uuid.Nil, nil
 	}
@@ -71,6 +72,7 @@ func (s *Service) updateContentBlock(
 	if s.blockstore == nil {
 		return fmt.Errorf("blockstore not configured")
 	}
+	blocknoteJSON = bnpkg.EnsureAST(blocknoteJSON)
 	actor := actorForTicketUser(orgID, userID)
 	ws, err := s.blockstore.EnsureDefaultWorkspace(ctx, actor)
 	if err != nil {

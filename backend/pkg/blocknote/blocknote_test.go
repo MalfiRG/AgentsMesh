@@ -1,6 +1,7 @@
 package blocknote
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -251,5 +252,49 @@ func TestToPlainText_JSONObjectNotArray(t *testing.T) {
 	result := ToPlainText(input)
 	if result != input {
 		t.Errorf("expected fallback to original string, got %q", result)
+	}
+}
+
+func TestEnsureAST_PassesThroughValidArray(t *testing.T) {
+	input := `[{"id":"1","type":"paragraph","props":{},"content":[{"type":"text","text":"hi","styles":{}}],"children":[]}]`
+	if got := EnsureAST(input); got != input {
+		t.Errorf("expected unchanged AST, got %q", got)
+	}
+}
+
+func TestEnsureAST_EmptySentinelsUnchanged(t *testing.T) {
+	for _, in := range []string{"", "  ", "null", "[]"} {
+		if got := EnsureAST(in); got != in {
+			t.Errorf("EnsureAST(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+func TestEnsureAST_WrapsPlainTextRoundTrip(t *testing.T) {
+	// Plain text / markdown from MCP/API callers must become a valid AST
+	// that ToPlainText can render back — otherwise the content path 500s.
+	for _, text := range []string{"hello world", "line one\nline two", "# A markdown heading"} {
+		ast := EnsureAST(text)
+		var blocks []Block
+		if err := json.Unmarshal([]byte(ast), &blocks); err != nil {
+			t.Fatalf("EnsureAST(%q) produced invalid AST: %v", text, err)
+		}
+		if got := ToPlainText(ast); got != text {
+			t.Errorf("round trip for %q = %q", text, got)
+		}
+	}
+}
+
+func TestFromPlainText_BlankLineIsEmptyParagraph(t *testing.T) {
+	ast := FromPlainText("a\n\nb")
+	var blocks []Block
+	if err := json.Unmarshal([]byte(ast), &blocks); err != nil {
+		t.Fatalf("invalid AST: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 paragraphs, got %d", len(blocks))
+	}
+	if len(blocks[1].Content) != 0 {
+		t.Errorf("expected blank middle paragraph to have no content, got %v", blocks[1].Content)
 	}
 }
