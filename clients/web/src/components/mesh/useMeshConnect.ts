@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useCurrentOrg } from "@/stores/auth";
 import { useMeshStore } from "@/stores/mesh";
-import { requestBindingConnect } from "@/lib/api/connect/bindingConnect";
+import { requestBindingConnect } from "@/lib/api/facade/bindingConnect";
 import { getLocalizedErrorMessage } from "@/lib/api/errors";
 
 // Dragging between pod handles requests a PodBinding. React Flow node ids are

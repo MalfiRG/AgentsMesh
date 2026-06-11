@@ -17,7 +17,7 @@ vi.mock("@/stores/mesh", () => ({
     selector({ fetchTopology: mockFetchTopology }),
 }));
 
-vi.mock("@/lib/api/connect/bindingConnect", () => ({
+vi.mock("@/lib/api/facade/bindingConnect", () => ({
   requestBindingConnect: (...args: unknown[]) => mockRequestBindingConnect(...args),
 }));
 
