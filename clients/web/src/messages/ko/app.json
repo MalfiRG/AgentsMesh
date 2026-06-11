@@ -30,6 +30,10 @@
     }
   },
   "mesh": {
+    "connect": {
+      "success": "Pod 연결을 생성했습니다",
+      "error": "Pod 연결에 실패했습니다"
+    },
     "title": "AgentsMesh",
     "channels": "채널",
     "newChannel": "새 채널",

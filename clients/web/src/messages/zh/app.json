@@ -58,6 +58,10 @@
     }
   },
   "mesh": {
+    "connect": {
+      "success": "已创建 Pod 连接",
+      "error": "连接 Pod 失败"
+    },
     "title": "智能体网络",
     "channels": "频道",
     "newChannel": "新建频道",
