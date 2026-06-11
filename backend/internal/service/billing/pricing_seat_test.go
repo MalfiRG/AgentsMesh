@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func TestCalculateSeatPurchasePrice_ExceedsMax(t *testing.T) {
 
 	// Try to add 2 seats (would exceed 50)
 	_, err := service.CalculateSeatPurchasePrice(ctx, 1, 2)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }

@@ -14,6 +14,10 @@ vi.mock("@/stores/auth", () => ({
   useAuthStore: () => ({}),
 }));
 
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
+
 vi.mock("@/stores/podCreation", () => ({
   usePodCreationStore: () => ({
     lastAgentSlug: null,
@@ -140,5 +144,40 @@ describe("useCreatePodForm - bundle via agentfile_layer (SSOT)", () => {
     expect(createArg).not.toHaveProperty("branch_name");
     expect(createArg).not.toHaveProperty("prompt");
     expect(createArg).not.toHaveProperty("config_overrides");
+  });
+});
+
+describe("useCreatePodForm - submit error mapping", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListEnvBundles.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  async function submitWithRejection(rejection: unknown): Promise<string | null> {
+    mockCreatePod.mockRejectedValue(rejection);
+    const { result } = renderHook(() => useCreatePodForm(mockAgents, []));
+    act(() => {
+      result.current.setSelectedAgent("claude-code");
+    });
+    await act(async () => {
+      await result.current.submit(1, {}, { cols: 80, rows: 24 });
+    });
+    return result.current.error;
+  }
+
+  it("maps resource_exhausted to the concurrent pod quota translation", async () => {
+    const wire = JSON.stringify({
+      kind: "http",
+      status: 429,
+      code: "resource_exhausted",
+      message: "quota exceeded: concurrent pod limit reached (5 of 5 in use)",
+    });
+    const error = await submitWithRejection(new Error(wire));
+    expect(error).toBe("apiErrors.CONCURRENT_POD_QUOTA_EXCEEDED");
+  });
+
+  it("keeps the original message for non-quota errors", async () => {
+    const error = await submitWithRejection(new Error("boom"));
+    expect(error).toBe("boom");
   });
 });

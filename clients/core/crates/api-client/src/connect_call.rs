@@ -68,29 +68,43 @@ where
             .canonical_reason()
             .unwrap_or("Unknown")
             .to_string();
-        // Connect-RPC error body is JSON `{"code":"...","message":"..."}`
-        // when content-negotiated with the server-side default; for protobuf
-        // we can't reliably parse it here without pulling Connect's typed
-        // errors. Fall back to status-only mapping — the upstream service
-        // layer surface (`ServiceError::Http`) treats the message field as
-        // opaque already.
+        // Connect-RPC errors are always JSON `{"code":"...","message":"..."}`
+        // regardless of the request content type (Connect spec, error model).
+        // Surface code + message as structured fields so front-ends can match
+        // on the code (e.g. resource_exhausted) instead of a raw JSON blob;
+        // non-Connect bodies (proxy errors, plain text) pass through verbatim.
         let body_bytes = resp.bytes().await.ok();
-        let server_message = body_bytes
+        let raw_body = body_bytes
             .as_ref()
             .and_then(|b| std::str::from_utf8(b).ok())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        let parsed = raw_body
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+        let code = parsed
+            .as_ref()
+            .and_then(|v| v.get("code"))
+            .and_then(|c| c.as_str())
+            .map(String::from);
+        let server_message = parsed
+            .as_ref()
+            .and_then(|v| v.get("message"))
+            .and_then(|m| m.as_str())
+            .map(String::from)
+            .or(raw_body);
         tracing::warn!(
             target: "api",
             procedure,
             status = status_code,
+            code = code.as_deref().unwrap_or(""),
             message = server_message.as_deref().unwrap_or(""),
             "connect_call ← error"
         );
         return Err(ApiError::Http {
             status: status_code,
             status_text,
-            code: None,
+            code,
             server_message,
             data: None,
             url: Some(url),

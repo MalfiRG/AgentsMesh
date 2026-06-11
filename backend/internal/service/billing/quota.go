@@ -47,7 +47,7 @@ func (s *Service) CheckQuota(ctx context.Context, orgID int64, resource string, 
 					return fmt.Errorf("failed to get current resource count: %w", err)
 				}
 				if current+requestedAmount > int(limit) {
-					return ErrQuotaExceeded
+					return quotaExceededError(resource, current, int(limit))
 				}
 				return nil
 			}
@@ -80,10 +80,42 @@ func (s *Service) CheckQuota(ctx context.Context, orgID int64, resource string, 
 	}
 	if current+requestedAmount > limit {
 		slog.WarnContext(ctx, "quota exceeded", "org_id", orgID, "resource", resource, "current", current, "requested", requestedAmount, "limit", limit)
-		return ErrQuotaExceeded
+		return quotaExceededError(resource, current, limit)
 	}
 
 	return nil
+}
+
+var quotaResourceLabels = map[string]string{
+	"users":           "member",
+	"runners":         "runner",
+	"concurrent_pods": "concurrent pod",
+	"repositories":    "repository",
+	"pod_minutes":     "pod minute",
+}
+
+func quotaExceededError(resource string, current, limit int) error {
+	label, ok := quotaResourceLabels[resource]
+	if !ok {
+		label = resource
+	}
+	return fmt.Errorf("%w: %s limit reached (%d of %d in use)", ErrQuotaExceeded, label, current, limit)
+}
+
+// EffectiveLimit resolves the limit clients should see for a resource:
+// a non-negative custom quota overrides the plan limit, mirroring CheckQuota.
+func EffectiveLimit(sub *billing.Subscription, resource string, planLimit int) int {
+	if sub == nil || sub.CustomQuotas == nil {
+		return planLimit
+	}
+	v, ok := sub.CustomQuotas[resource]
+	if !ok {
+		return planLimit
+	}
+	if f, ok := v.(float64); ok && int(f) != -1 {
+		return int(f)
+	}
+	return planLimit
 }
 
 // CheckSeatAvailability gates member invitations against purchased seats (not plan limits).

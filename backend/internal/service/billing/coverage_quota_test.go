@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestCheckQuota_RunnersExceeded(t *testing.T) {
 
 	// Should fail when trying to add another runner
 	err := svc.CheckQuota(context.Background(), 1, "runners", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -61,7 +62,7 @@ func TestCheckQuota_ReposExceeded(t *testing.T) {
 
 	// Should fail when trying to add another repo
 	err := svc.CheckQuota(context.Background(), 1, "repositories", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -89,7 +90,7 @@ func TestCheckQuota_ConcurrentPodsExceeded(t *testing.T) {
 
 	// Should fail when trying to add another pod
 	err := svc.CheckQuota(context.Background(), 1, "concurrent_pods", 1)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
@@ -139,7 +140,7 @@ func TestCheckQuota_WithCustomQuotaLimit(t *testing.T) {
 
 	// Should fail - custom quota of 5, used 4, requesting 2 more (total 6 > 5)
 	err = svc.CheckQuota(context.Background(), 1, "users", 2)
-	if err != ErrQuotaExceeded {
+	if !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("expected ErrQuotaExceeded, got %v", err)
 	}
 }
