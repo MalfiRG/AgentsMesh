@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/anthropics/agentsmesh/runner/internal/mcp/tools"
@@ -52,7 +53,9 @@ func (s *HTTPServer) createGetPodSnapshotTool() *MCPTool {
 				if err == nil {
 					return output, nil
 				}
-				// Fall through to Backend API if local access fails
+				if !errors.Is(err, ErrPodNotLocal) {
+					return nil, err
+				}
 			}
 
 			// Fall back to Backend API for remote pods
@@ -66,7 +69,7 @@ func (s *HTTPServer) createGetPodSnapshotTool() *MCPTool {
 func (s *HTTPServer) createSendPodInputTool() *MCPTool {
 	return &MCPTool{
 		Name:        "send_pod_input",
-		Description: "Send text and/or special keys to another agent pod. Requires pod:write permission via binding. At least one of text or keys must be provided. Supports keys: enter, escape, tab, backspace, delete, ctrl+c, ctrl+d, ctrl+u, ctrl+l, ctrl+z, ctrl+a, ctrl+e, ctrl+k, ctrl+w, up, down, left, right, home, end, pageup, pagedown, shift+tab",
+		Description: "Send a message and/or special keys to another agent pod. Requires pod:write permission via binding. At least one of text or keys must be provided. `text` is submitted as a prompt (Enter is pressed automatically) - do NOT also pass an 'enter' key when sending text, or it will submit twice. Use `keys` for raw control sequences without text. Supports keys: enter, escape, tab, backspace, delete, ctrl+c, ctrl+d, ctrl+u, ctrl+l, ctrl+z, ctrl+a, ctrl+e, ctrl+k, ctrl+w, up, down, left, right, home, end, pageup, pagedown, shift+tab",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -76,7 +79,7 @@ func (s *HTTPServer) createSendPodInputTool() *MCPTool {
 				},
 				"text": map[string]interface{}{
 					"type":        "string",
-					"description": "Text to send to the pod (optional if keys is provided)",
+					"description": "Message to send to the pod, submitted as a prompt with Enter pressed automatically (optional if keys is provided)",
 				},
 				"keys": map[string]interface{}{
 					"type":        "array",
@@ -99,13 +102,19 @@ func (s *HTTPServer) createSendPodInputTool() *MCPTool {
 				return nil, fmt.Errorf("at least one of text or keys is required")
 			}
 
+			if text != "" {
+				keys = dropEnterKeys(keys)
+			}
+
 			// Try local pod provider first (for AutopilotController control process)
 			if s.podProvider != nil {
 				err := s.podProvider.SendPodInput(podKey, text, keys)
 				if err == nil {
 					return "Input sent successfully", nil
 				}
-				// Fall through to Backend API if local access fails
+				if !errors.Is(err, ErrPodNotLocal) {
+					return nil, err
+				}
 			}
 
 			// Fall back to Backend API for remote pods
@@ -116,6 +125,17 @@ func (s *HTTPServer) createSendPodInputTool() *MCPTool {
 			return "Input sent successfully", nil
 		},
 	}
+}
+
+// dropEnterKeys drops a redundant caller-supplied "enter"; text already submits.
+func dropEnterKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k != "enter" && k != "Enter" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func (s *HTTPServer) createGetPodStatusTool() *MCPTool {

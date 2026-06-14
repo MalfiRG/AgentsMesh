@@ -4,7 +4,9 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +21,19 @@ type spyPodProvider struct {
 	mu       sync.Mutex
 	snapshot string
 	calls    []sendInputCall
+	sendErr  error
+}
+
+// spyCollabClient is the backend fallback client; it records whether the
+// handler routed to the backend (the "replay" path) after a local error.
+type spyCollabClient struct {
+	mockFormatClient
+	sendCalls int
+}
+
+func (s *spyCollabClient) SendPodInput(context.Context, string, string, []string) error {
+	s.sendCalls++
+	return nil
 }
 
 type sendInputCall struct {
@@ -38,7 +53,7 @@ func (p *spyPodProvider) SendPodInput(podKey, text string, keys []string) error 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, sendInputCall{PodKey: podKey, Text: text, Keys: keys})
-	return nil
+	return p.sendErr
 }
 
 func (p *spyPodProvider) lastCall() (sendInputCall, bool) {
@@ -179,8 +194,8 @@ func TestMCPToolCall_SendInput_Integration(t *testing.T) {
 	if call.Text != "ls -la" {
 		t.Errorf("text: got %q, want %q", call.Text, "ls -la")
 	}
-	if len(call.Keys) != 1 || call.Keys[0] != "enter" {
-		t.Errorf("keys: got %v, want [enter]", call.Keys)
+	if len(call.Keys) != 0 {
+		t.Errorf("keys: got %v, want [] (redundant enter dropped)", call.Keys)
 	}
 }
 
@@ -198,4 +213,58 @@ func TestMCPToolCall_GetSnapshot_Integration(t *testing.T) {
 
 	assertContains(t, text, "git status")
 	assertContains(t, text, "nothing to commit")
+}
+
+func TestMCPToolCall_SendInput_LocalFailure_NoReplay(t *testing.T) {
+	provider := &spyPodProvider{sendErr: errors.New("local send failed")}
+	spy := &spyCollabClient{}
+	srv := NewHTTPServer(nil, 0)
+	srv.RegisterPod("caller-pod", "org1", nil, nil, "claude")
+	srv.SetPodProvider(provider)
+	srv.mu.Lock()
+	srv.pods["caller-pod"].Client = spy
+	srv.mu.Unlock()
+
+	ts := startTestServer(t, srv)
+	doToolCall(t, ts.URL, "caller-pod", "send_pod_input", `{"pod_key":"worker-pod","text":"deploy"}`)
+
+	if len(provider.calls) != 1 {
+		t.Fatalf("local provider should be called once; got %d", len(provider.calls))
+	}
+	if spy.sendCalls != 0 {
+		t.Fatalf("a local failure must NOT replay to the backend; backend called %d times", spy.sendCalls)
+	}
+}
+
+func TestMCPToolCall_SendInput_NotLocal_FallsThrough(t *testing.T) {
+	provider := &spyPodProvider{sendErr: ErrPodNotLocal}
+	spy := &spyCollabClient{}
+	srv := NewHTTPServer(nil, 0)
+	srv.RegisterPod("caller-pod", "org1", nil, nil, "claude")
+	srv.SetPodProvider(provider)
+	srv.mu.Lock()
+	srv.pods["caller-pod"].Client = spy
+	srv.mu.Unlock()
+
+	ts := startTestServer(t, srv)
+	doToolCall(t, ts.URL, "caller-pod", "send_pod_input", `{"pod_key":"worker-pod","text":"deploy"}`)
+
+	if spy.sendCalls != 1 {
+		t.Fatalf("a not-local pod must fall through to the backend once; got %d", spy.sendCalls)
+	}
+}
+
+func TestMCPToolCall_SendInput_KeysOnly(t *testing.T) {
+	provider := &spyPodProvider{}
+	srv := NewHTTPServer(nil, 0)
+	srv.RegisterPod("caller-pod", "org1", nil, nil, "claude")
+	srv.SetPodProvider(provider)
+
+	ts := startTestServer(t, srv)
+	doToolCall(t, ts.URL, "caller-pod", "send_pod_input", `{"pod_key":"worker-pod","keys":["ctrl+c"]}`)
+
+	call, ok := provider.lastCall()
+	if !ok || call.Text != "" || len(call.Keys) != 1 || call.Keys[0] != "ctrl+c" {
+		t.Fatalf("keys-only should forward keys verbatim with no text; got %+v", call)
+	}
 }

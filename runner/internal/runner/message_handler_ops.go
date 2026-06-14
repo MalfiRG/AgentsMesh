@@ -127,14 +127,8 @@ func (h *RunnerMessageHandler) OnObservePod(req client.ObservePodRequest) error 
 	return nil
 }
 
-// OnSendPrompt handles send_prompt command from server (gRPC control plane).
-// Mode-transparent submission: ACP submits via its structured SendPrompt RPC;
-// PTY writes the body then issues a separate Enter keystroke via SendKeys
-// (the "press Enter" semantic — not SendInput which is "raw bytes"). A small
-// gap between the two writes is required so the TUI doesn't fold them into
-// a single paste.
-// For ACP mode, also echoes the user message via Relay so it appears in the
-// chat UI (consistent with the Relay command path in handleAcpRelayCommand).
+// OnSendPrompt handles the send_prompt command from the server (gRPC control
+// plane), delegating submission to submitPromptToPod.
 func (h *RunnerMessageHandler) OnSendPrompt(cmd *runnerv1.SendPromptCommand) error {
 	log := logger.Pod()
 	pod, ok := h.podStore.Get(cmd.PodKey)
@@ -146,13 +140,18 @@ func (h *RunnerMessageHandler) OnSendPrompt(cmd *runnerv1.SendPromptCommand) err
 		log.Warn("PodIO not available for send_prompt", "pod_key", cmd.PodKey)
 		return fmt.Errorf("pod IO not available: %s", cmd.PodKey)
 	}
-	// ACP: echo user message to Relay so it appears in the chat panel.
+	return submitPromptToPod(pod, cmd.Prompt)
+}
+
+// submitPromptToPod is the shared prompt-submit path for the gRPC control plane
+// (OnSendPrompt) and the cross-pod MCP path (Runner.SendPodInput).
+func submitPromptToPod(pod *Pod, prompt string) error {
 	if pod.IsACPMode() {
-		sendAcpViaRelay(pod, "content_chunk", "", map[string]string{
-			"text": cmd.Prompt, "role": "user",
+		sendAcpViaRelay(pod, "contentChunk", "", map[string]string{
+			"text": prompt, "role": "user",
 		})
 	}
-	if err := pod.IO.SendInput(cmd.Prompt); err != nil {
+	if err := pod.IO.SendInput(prompt); err != nil {
 		return err
 	}
 	if ta, ok := pod.IO.(TerminalAccess); ok {

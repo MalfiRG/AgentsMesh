@@ -2,6 +2,8 @@ package runner
 
 import (
 	"fmt"
+
+	"github.com/anthropics/agentsmesh/runner/internal/mcp"
 )
 
 // GetPodStatus returns the agent status for a given pod key.
@@ -27,7 +29,7 @@ func (r *Runner) GetPodStatus(podKey string) (agentStatus string, podStatus stri
 func (r *Runner) GetPodSnapshot(podKey string, lines int) (string, error) {
 	pod, exists := r.podStore.Get(podKey)
 	if !exists || pod == nil {
-		return "", fmt.Errorf("pod not found: %s", podKey)
+		return "", mcp.ErrPodNotLocal
 	}
 
 	if pod.IO == nil {
@@ -42,15 +44,15 @@ func (r *Runner) GetPodSnapshot(podKey string, lines int) (string, error) {
 func (r *Runner) SendPodInput(podKey string, text string, keys []string) error {
 	pod, exists := r.podStore.Get(podKey)
 	if !exists || pod == nil {
-		return fmt.Errorf("pod not found: %s", podKey)
+		return mcp.ErrPodNotLocal
 	}
 	if pod.IO == nil {
 		return fmt.Errorf("pod IO not available: %s", podKey)
 	}
 
 	if text != "" {
-		if err := pod.IO.SendInput(text); err != nil {
-			return fmt.Errorf("failed to send text: %w", err)
+		if err := submitPromptToPod(pod, text); err != nil {
+			return fmt.Errorf("failed to send prompt: %w", err)
 		}
 	}
 	if len(keys) > 0 {

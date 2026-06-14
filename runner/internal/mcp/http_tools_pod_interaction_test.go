@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestDropEnterKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"only enter", []string{"enter"}, []string{}},
+		{"capital Enter", []string{"Enter"}, []string{}},
+		{"mixed keeps others", []string{"ctrl+c", "enter", "escape"}, []string{"ctrl+c", "escape"}},
+		{"no enter unchanged", []string{"ctrl+c", "tab"}, []string{"ctrl+c", "tab"}},
+		{"empty", nil, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := dropEnterKeys(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("dropEnterKeys(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("dropEnterKeys(%v) = %v, want %v", tc.in, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestHTTPServerMCPToolsCallSendPodInput(t *testing.T) {
 	server := NewHTTPServer(nil, 9090)
 	server.RegisterPod("test-pod", "test-org", nil, nil, "claude")

@@ -92,11 +92,13 @@ const promptTemplate = `你是任务编排代理（Control Agent）。你的职�
 - lines: 要获取的行数，建议 100
 
 ### 2. send_pod_input - 发送输入给 Pod
-向 Pod 发送文本指令和/或特殊键。text 先发，keys 后发。至少提供 text 或 keys 之一。
+向 Pod 发送文本指令和/或特殊键。至少提供 text 或 keys 之一。
+text 会作为 prompt 自动提交（自动按回车），所以发送 text 时不要再附带 "enter" 键。
+keys 用于不带文本的原始控制序列。
 参数：
 - pod_key: "%s" (固定值)
-- text: 要发送的文本内容（可选）
-- keys: 键名数组，如 ["enter"], ["ctrl+c"], ["escape"]（可选）
+- text: 要发送的文本内容，自动提交（可选）
+- keys: 键名数组，如 ["ctrl+c"], ["escape"]（可选）
 
 ### 4. get_pod_status - 获取 Pod 状态
 获取 Pod 的当前状态（executing/waiting/idle）。
@@ -106,7 +108,7 @@ const promptTemplate = `你是任务编排代理（Control Agent）。你的职�
 ## 工作流程
 1. 使用 get_pod_snapshot 观察 Pod 终端，了解当前状态
 2. 分析任务进展，判断任务是否完成
-3. 如果未完成，使用 send_pod_input 发送下一步指令给 Pod（可同时附带回车键等特殊键）
+3. 如果未完成，使用 send_pod_input 发送下一步指令给 Pod（text 自动提交，无需附带回车键）
 4. 输出结构化的决策 JSON
 
 ## 输出格式（重要！）

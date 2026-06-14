@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,6 +16,11 @@ import (
 	"github.com/anthropics/agentsmesh/runner/internal/mcp/tools"
 	"github.com/anthropics/agentsmesh/runner/internal/safego"
 )
+
+// ErrPodNotLocal signals a pod is not on this runner. A LocalPodProvider MUST
+// return it ONLY for not-here pods; any other error means a local failure that
+// must not be retried against the backend.
+var ErrPodNotLocal = errors.New("pod not local to this runner")
 
 // PodStatusProvider provides Pod status information.
 // This interface allows HTTPServer to query Pod status from the Runner.
