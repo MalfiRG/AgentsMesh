@@ -179,8 +179,8 @@ func TestMCPToolCall_SendInput_Integration(t *testing.T) {
 	if call.Text != "ls -la" {
 		t.Errorf("text: got %q, want %q", call.Text, "ls -la")
 	}
-	if len(call.Keys) != 1 || call.Keys[0] != "enter" {
-		t.Errorf("keys: got %v, want [enter]", call.Keys)
+	if len(call.Keys) != 0 {
+		t.Errorf("keys: got %v, want [] (redundant enter dropped)", call.Keys)
 	}
 }
 

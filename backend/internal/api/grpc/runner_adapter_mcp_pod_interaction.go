@@ -109,12 +109,15 @@ func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.
 	}
 
 	if params.Text != "" {
-		if err := a.podRouter.RoutePodInput(params.PodKey, []byte(params.Text)); err != nil {
-			return nil, newMcpErrorf(500, "failed to send pod input text: %v", err)
+		if err := a.podRouter.RoutePrompt(params.PodKey, params.Text); err != nil {
+			return nil, newMcpErrorf(500, "failed to send pod prompt: %v", err)
 		}
 	}
 
 	for _, key := range params.Keys {
+		if params.Text != "" && (key == "enter" || key == "Enter") {
+			continue
+		}
 		input := convertKeyToInput(key)
 		if err := a.podRouter.RoutePodInput(params.PodKey, []byte(input)); err != nil {
 			return nil, newMcpErrorf(500, "failed to send pod input key: %v", err)
