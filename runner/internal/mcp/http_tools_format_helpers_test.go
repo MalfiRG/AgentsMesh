@@ -186,6 +186,45 @@ func (m *mockFormatClient) TriggerLoop(_ context.Context, _ string, _ map[string
 	return nil, nil
 }
 
+func (m *mockFormatClient) DeleteTicket(_ context.Context, _ string) error { return nil }
+
+func (m *mockFormatClient) BlockCreate(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockUpdate(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockDelete(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockAddRef(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockRemoveRef(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockUpdateRef(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) IndicatorDefine(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) TriggerDefine(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) MemoryRetrieve(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockListTypes(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockListWorkspaces(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (m *mockFormatClient) BlockGetDefaultWorkspace(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	return nil, nil
+}
+
 // --- Mock status provider ---
 
 type mockStatusProvider struct{}
