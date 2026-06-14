@@ -60,3 +60,14 @@ jobs:
           cd "$AGENTSMESH_DIR/deploy/selfhost"
           docker compose up -d --pull never
           docker compose ps
+
+      - name: Reclaim disk (retention for superseded images)
+        if: always()
+        run: |
+          set -euo pipefail
+          # Re-tagging :local on every deploy orphans the previous image as a
+          # dangling layer; prune those plus stale build cache. In-use images
+          # (the running stack) are referenced and never removed.
+          docker image prune -f
+          docker builder prune -f
+          docker system df
