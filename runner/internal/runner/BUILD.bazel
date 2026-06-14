@@ -113,6 +113,7 @@ alias(
 go_test(
     name = "runner_test",
     srcs = [
+        "acp_echo_test.go",
         "autopilot_store_test.go",
         "claude_initial_config_test.go",
         "copy_dir_selective_test.go",

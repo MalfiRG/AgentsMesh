@@ -107,6 +107,8 @@ go_test(
         "runner_adapter_integration_test.go",
         "runner_adapter_mcp_block_test.go",
         "runner_adapter_mcp_block_workspace_test.go",
+        "runner_adapter_mcp_pod_binding_test.go",
+        "runner_adapter_mcp_route_test.go",
         "runner_adapter_mcp_ticket_test.go",
         "runner_adapter_message_test.go",
         "runner_adapter_mock_sendstream_test.go",

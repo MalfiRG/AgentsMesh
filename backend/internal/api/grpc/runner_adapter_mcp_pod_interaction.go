@@ -108,23 +108,31 @@ func (a *GRPCRunnerAdapter) mcpSendPodInput(ctx context.Context, tc *middleware.
 		return nil, newMcpError(503, "pod router not available")
 	}
 
-	if params.Text != "" {
-		if err := a.podRouter.RoutePrompt(params.PodKey, params.Text); err != nil {
-			return nil, newMcpErrorf(500, "failed to send pod prompt: %v", err)
-		}
-	}
-
-	for _, key := range params.Keys {
-		if params.Text != "" && (key == "enter" || key == "Enter") {
-			continue
-		}
-		input := convertKeyToInput(key)
-		if err := a.podRouter.RoutePodInput(params.PodKey, []byte(input)); err != nil {
-			return nil, newMcpErrorf(500, "failed to send pod input key: %v", err)
-		}
+	if mcpErr := routeSendPodInput(a.podRouter, params.PodKey, params.Text, params.Keys); mcpErr != nil {
+		return nil, mcpErr
 	}
 
 	return map[string]interface{}{"message": "input sent"}, nil
+}
+
+// routeSendPodInput submits text as a prompt (RoutePrompt presses Enter) and
+// sends keys as raw control sequences. A redundant "enter" key is skipped when
+// text is present so the prompt is not submitted twice.
+func routeSendPodInput(r PodRouterForMCP, podKey, text string, keys []string) *mcpError {
+	if text != "" {
+		if err := r.RoutePrompt(podKey, text); err != nil {
+			return newMcpErrorf(500, "failed to send pod prompt: %v", err)
+		}
+	}
+	for _, key := range keys {
+		if text != "" && (key == "enter" || key == "Enter") {
+			continue
+		}
+		if err := r.RoutePodInput(podKey, []byte(convertKeyToInput(key))); err != nil {
+			return newMcpErrorf(500, "failed to send pod input key: %v", err)
+		}
+	}
+	return nil
 }
 
 // requirePodBinding enforces the mesh isolation model documented in
