@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mcp",
     srcs = [
+        "channel_message_delivery.go",
         "grpc_client.go",
         "grpc_client_binding.go",
         "grpc_client_block.go",
@@ -60,6 +61,7 @@ alias(
 go_test(
     name = "mcp_test",
     srcs = [
+        "channel_message_delivery_test.go",
         "http_server_basic_test.go",
         "http_server_benchmark_test.go",
         "http_server_coverage_test.go",

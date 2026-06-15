@@ -12,7 +12,7 @@ import (
 func (s *HTTPServer) createSendChannelMessageTool() *MCPTool {
 	return &MCPTool{
 		Name:        "send_channel_message",
-		Description: "Send a message to a collaboration channel.",
+		Description: sendChannelMessageDesc,
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -36,7 +36,7 @@ func (s *HTTPServer) createSendChannelMessageTool() *MCPTool {
 				"mentions": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Pod keys to mention in the message",
+					"description": mentionsFieldDesc,
 				},
 				"reply_to": map[string]interface{}{
 					"type":        "integer",
@@ -64,7 +64,11 @@ func (s *HTTPServer) createSendChannelMessageTool() *MCPTool {
 				msgType = "text"
 			}
 
-			return client.SendMessage(ctx, channelID, content, source, tools.ChannelMessageType(msgType), mentions, replyTo)
+			result, err := client.SendMessage(ctx, channelID, content, source, tools.ChannelMessageType(msgType), mentions, replyTo)
+			if err != nil {
+				return nil, err
+			}
+			return annotateChannelDelivery(result, mentions), nil
 		},
 	}
 }
