@@ -1,5 +1,7 @@
 package mcp
 
+import "strings"
+
 const sendChannelMessageDesc = `Post a message to a collaboration channel.
 
 Delivery model (decides whether another pod actually sees this):
@@ -20,6 +22,25 @@ const mentionsFieldDesc = `Full pod keys to actively notify, e.g. ["3-134-02fb30
 const passiveSendNotice = "No pods were mentioned, so no pod was notified. This message is " +
 	"passive - other pods see it only if they call get_channel_messages. To actively notify a " +
 	"pod and prompt a reply, resend with mentions=[\"<full_pod_key>\"]."
+
+// normalizePodMentions prefixes bare pod keys with "pod:" so they match the
+// backend mcpSendMessage contract (web sends "pod:<key>" / "user:<id>"; the
+// runner tool accepts bare keys for agent ergonomics). Without this the backend
+// splits on ":" , finds no type prefix, and silently drops the mention.
+func normalizePodMentions(mentions []string) []string {
+	if len(mentions) == 0 {
+		return mentions
+	}
+	out := make([]string, 0, len(mentions))
+	for _, m := range mentions {
+		if strings.HasPrefix(m, "pod:") || strings.HasPrefix(m, "user:") {
+			out = append(out, m)
+		} else {
+			out = append(out, "pod:"+m)
+		}
+	}
+	return out
+}
 
 func annotateChannelDelivery(message interface{}, mentions []string) interface{} {
 	if len(mentions) > 0 {

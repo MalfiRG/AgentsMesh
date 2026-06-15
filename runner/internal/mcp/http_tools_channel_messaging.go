@@ -50,7 +50,7 @@ func (s *HTTPServer) createSendChannelMessageTool() *MCPTool {
 			content := getStringArg(args, "content")
 			source := getStringArg(args, "source")
 			msgType := getStringArg(args, "message_type")
-			mentions := getStringSliceArg(args, "mentions")
+			mentions := normalizePodMentions(getStringSliceArg(args, "mentions"))
 			replyTo := getIntPtrArg(args, "reply_to")
 
 			if channelID == 0 {
