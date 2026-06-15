@@ -202,7 +202,7 @@ services:
       - RELAY_REGION=local
       - RELAY_CAPACITY=1000
       - PRIMARY_DOMAIN=${PRIMARY_DOMAIN}
-      - USE_HTTPS=false
+      - USE_HTTPS=${USE_HTTPS:-false}
       - SESSION_KEEP_ALIVE_DURATION=30s
       - DEBUG=false
     healthcheck:
