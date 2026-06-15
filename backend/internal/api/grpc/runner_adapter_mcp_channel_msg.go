@@ -64,6 +64,8 @@ func (a *GRPCRunnerAdapter) mcpSendMessage(ctx context.Context, tc *middleware.T
 		content = buildTextContent(params.Content, mentionMap)
 	}
 
+	content = ensureParamMentionsEmbedded(content, mentionMap)
+
 	msg, err := a.channelService.SendMessage(ctx, params.ChannelID, &podKey, &tc.UserID, content, nil)
 	if err != nil {
 		return nil, newMcpError(400, "failed to send message: "+err.Error())
