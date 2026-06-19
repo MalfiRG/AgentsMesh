@@ -40,6 +40,17 @@ func (s *Server) UpdateTicket(
 		}
 	}
 
+	if len(req.Msg.GetLabels()) > 0 {
+		if err := s.ticketSvc.ReplaceTicketLabels(ctx, t.ID, tenant.OrganizationID, req.Msg.GetLabels()); err != nil {
+			return nil, mapServiceError(err)
+		}
+		refreshed, ferr := s.ticketSvc.GetTicket(ctx, t.ID)
+		if ferr != nil {
+			return nil, connect.NewError(connect.CodeInternal, ferr)
+		}
+		t = refreshed
+	}
+
 	return connect.NewResponse(toProtoTicket(t)), nil
 }
 
