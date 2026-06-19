@@ -62,7 +62,7 @@ func (c *GRPCCollaborationClient) GetTicket(ctx context.Context, ticketSlug stri
 }
 
 // CreateTicket creates a new ticket.
-func (c *GRPCCollaborationClient) CreateTicket(ctx context.Context, repositoryID *int64, title, content string, priority tools.TicketPriority, parentTicketSlug *string) (*tools.Ticket, error) {
+func (c *GRPCCollaborationClient) CreateTicket(ctx context.Context, repositoryID *int64, title, content string, priority tools.TicketPriority, parentTicketSlug *string, labels []string) (*tools.Ticket, error) {
 	params := map[string]interface{}{
 		"title":    title,
 		"priority": priority,
@@ -76,6 +76,9 @@ func (c *GRPCCollaborationClient) CreateTicket(ctx context.Context, repositoryID
 	if parentTicketSlug != nil {
 		params["parent_ticket_slug"] = *parentTicketSlug
 	}
+	if len(labels) > 0 {
+		params["labels"] = labels
+	}
 	var result struct {
 		Ticket tools.Ticket `json:"ticket"`
 	}
@@ -86,7 +89,7 @@ func (c *GRPCCollaborationClient) CreateTicket(ctx context.Context, repositoryID
 }
 
 // UpdateTicket updates a ticket.
-func (c *GRPCCollaborationClient) UpdateTicket(ctx context.Context, ticketSlug string, title, content *string, status *tools.TicketStatus, priority *tools.TicketPriority) (*tools.Ticket, error) {
+func (c *GRPCCollaborationClient) UpdateTicket(ctx context.Context, ticketSlug string, title, content *string, status *tools.TicketStatus, priority *tools.TicketPriority, labels []string) (*tools.Ticket, error) {
 	params := map[string]interface{}{
 		"ticket_slug": ticketSlug,
 	}
@@ -101,6 +104,9 @@ func (c *GRPCCollaborationClient) UpdateTicket(ctx context.Context, ticketSlug s
 	}
 	if priority != nil {
 		params["priority"] = *priority
+	}
+	if labels != nil {
+		params["labels"] = labels
 	}
 	var result struct {
 		Ticket tools.Ticket `json:"ticket"`

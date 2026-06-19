@@ -37,6 +37,11 @@ func (s *HTTPServer) createCreateTicketTool() *MCPTool {
 					"type":        "string",
 					"description": "Parent ticket slug (e.g., 'AM-123') for creating subtasks",
 				},
+				"labels": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Label names to attach (optional). Labels are created if they do not exist.",
+				},
 			},
 			"required": []string{"title"},
 		},
@@ -55,7 +60,7 @@ func (s *HTTPServer) createCreateTicketTool() *MCPTool {
 			}
 
 			content := getStringArg(args, "content")
-			return client.CreateTicket(ctx, repositoryID, title, content, tools.TicketPriority(priority), parentTicketSlug)
+			return client.CreateTicket(ctx, repositoryID, title, content, tools.TicketPriority(priority), parentTicketSlug, getStringSliceArg(args, "labels"))
 		},
 	}
 }
@@ -89,6 +94,11 @@ func (s *HTTPServer) createUpdateTicketTool() *MCPTool {
 					"enum":        []string{"urgent", "high", "medium", "low", "none"},
 					"description": "New priority (optional)",
 				},
+				"labels": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Replace the ticket's labels with this exact set (optional; omit to leave labels unchanged, empty array to clear). Labels are created if they do not exist.",
+				},
 			},
 			"required": []string{"ticket_slug"},
 		},
@@ -120,7 +130,7 @@ func (s *HTTPServer) createUpdateTicketTool() *MCPTool {
 				content = &d
 			}
 
-			return client.UpdateTicket(ctx, ticketSlug, title, content, status, priority)
+			return client.UpdateTicket(ctx, ticketSlug, title, content, status, priority, getStringSliceArg(args, "labels"))
 		},
 	}
 }
