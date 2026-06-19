@@ -91,7 +91,7 @@ func (m *mockFormatClient) GetTicket(_ context.Context, _ string, _ *int, _ *int
 	}, nil
 }
 
-func (m *mockFormatClient) CreateTicket(_ context.Context, _ *int64, _, _ string, _ tools.TicketPriority, _ *string) (*tools.Ticket, error) {
+func (m *mockFormatClient) CreateTicket(_ context.Context, _ *int64, _, _ string, _ tools.TicketPriority, _ *string, _ []string) (*tools.Ticket, error) {
 	return &tools.Ticket{
 		Slug: "AM-200", Title: "New ticket",
 		Status: tools.TicketStatusTodo, Priority: tools.TicketPriorityMedium,
@@ -99,7 +99,7 @@ func (m *mockFormatClient) CreateTicket(_ context.Context, _ *int64, _, _ string
 	}, nil
 }
 
-func (m *mockFormatClient) UpdateTicket(_ context.Context, _ string, _, _ *string, _ *tools.TicketStatus, _ *tools.TicketPriority) (*tools.Ticket, error) {
+func (m *mockFormatClient) UpdateTicket(_ context.Context, _ string, _, _ *string, _ *tools.TicketStatus, _ *tools.TicketPriority, _ []string) (*tools.Ticket, error) {
 	return &tools.Ticket{
 		Slug: "AM-123", Title: "Fix auth bug (updated)",
 		Status: tools.TicketStatusDone, Priority: tools.TicketPriorityHigh,

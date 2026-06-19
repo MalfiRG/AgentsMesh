@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	domainticket "github.com/anthropics/agentsmesh/backend/internal/domain/ticket"
 	ticketservice "github.com/anthropics/agentsmesh/backend/internal/service/ticket"
 )
 
@@ -24,6 +25,8 @@ func mapServiceError(err error) error {
 		return connect.NewError(connect.CodeAlreadyExists, err)
 	case errors.Is(err, ticketservice.ErrInvalidTransition):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, domainticket.ErrInvalidLabelName):
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
 	}

@@ -134,12 +134,21 @@ func (r *ticketRepository) CreateTicketAtomic(ctx context.Context, p *ticket.Cre
 			}
 		}
 
-		for _, name := range p.LabelNames {
-			var label ticket.Label
-			if err := tx.Where("organization_id = ? AND name = ?", p.Ticket.OrganizationID, name).First(&label).Error; err != nil {
-				continue // skip unknown labels
+		names, err := normalizeLabelNames(p.LabelNames)
+		if err != nil {
+			return err
+		}
+		seenIDs := make(map[int64]struct{}, len(names))
+		for _, name := range names {
+			labelID, err := getOrCreateLabel(tx, p.Ticket.OrganizationID, name)
+			if err != nil {
+				return err
 			}
-			if err := tx.Create(&ticket.TicketLabel{TicketID: p.Ticket.ID, LabelID: label.ID}).Error; err != nil {
+			if _, dup := seenIDs[labelID]; dup {
+				continue
+			}
+			seenIDs[labelID] = struct{}{}
+			if err := tx.Create(&ticket.TicketLabel{TicketID: p.Ticket.ID, LabelID: labelID}).Error; err != nil {
 				return err
 			}
 		}

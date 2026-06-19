@@ -43,8 +43,8 @@ type ChannelClient interface {
 type TicketClient interface {
 	SearchTickets(ctx context.Context, repositoryID *int, status *TicketStatus, priority *TicketPriority, assigneeID *int, parentTicketSlug *string, query string, limit, page int) ([]Ticket, error)
 	GetTicket(ctx context.Context, ticketSlug string, contentOffset, contentLimit *int) (*Ticket, error)
-	CreateTicket(ctx context.Context, repositoryID *int64, title, content string, priority TicketPriority, parentTicketSlug *string) (*Ticket, error)
-	UpdateTicket(ctx context.Context, ticketSlug string, title, content *string, status *TicketStatus, priority *TicketPriority) (*Ticket, error)
+	CreateTicket(ctx context.Context, repositoryID *int64, title, content string, priority TicketPriority, parentTicketSlug *string, labels []string) (*Ticket, error)
+	UpdateTicket(ctx context.Context, ticketSlug string, title, content *string, status *TicketStatus, priority *TicketPriority, labels []string) (*Ticket, error)
 	DeleteTicket(ctx context.Context, ticketSlug string) error
 	PostComment(ctx context.Context, ticketSlug, content string, parentID *int64) (*TicketComment, error)
 }

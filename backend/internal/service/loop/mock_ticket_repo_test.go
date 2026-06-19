@@ -114,6 +114,9 @@ func (m *mockTicketRepoForCrossUnit) AddTicketLabel(context.Context, int64, int6
 func (m *mockTicketRepoForCrossUnit) RemoveTicketLabel(context.Context, int64, int64) error {
 	return nil
 }
+func (m *mockTicketRepoForCrossUnit) ReplaceLabels(context.Context, int64, int64, []string) error {
+	return nil
+}
 func (m *mockTicketRepoForCrossUnit) GetRelation(context.Context, int64) (*ticket.Relation, error) {
 	return nil, nil
 }

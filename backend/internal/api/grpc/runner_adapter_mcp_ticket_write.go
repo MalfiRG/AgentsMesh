@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 
 	ticketDomain "github.com/anthropics/agentsmesh/backend/internal/domain/ticket"
 	"github.com/anthropics/agentsmesh/backend/internal/middleware"
@@ -11,11 +12,12 @@ import (
 
 func (a *GRPCRunnerAdapter) mcpCreateTicket(ctx context.Context, tc *middleware.TenantContext, payload []byte) (interface{}, *mcpError) {
 	var params struct {
-		RepositoryID     *int64  `json:"repository_id"`
-		Title            string  `json:"title"`
-		Content          string  `json:"content"`
-		Priority         string  `json:"priority"`
-		ParentTicketSlug *string `json:"parent_ticket_slug"`
+		RepositoryID     *int64   `json:"repository_id"`
+		Title            string   `json:"title"`
+		Content          string   `json:"content"`
+		Priority         string   `json:"priority"`
+		ParentTicketSlug *string  `json:"parent_ticket_slug"`
+		Labels           []string `json:"labels"`
 	}
 	if err := unmarshalPayload(payload, &params); err != nil {
 		return nil, err
@@ -55,8 +57,12 @@ func (a *GRPCRunnerAdapter) mcpCreateTicket(ctx context.Context, tc *middleware.
 		Content:        content,
 		Priority:       params.Priority,
 		ParentTicketID: parentTicketID,
+		Labels:         params.Labels,
 	})
 	if err != nil {
+		if errors.Is(err, ticketDomain.ErrInvalidLabelName) {
+			return nil, newMcpError(400, "invalid label name")
+		}
 		return nil, newMcpError(500, "failed to create ticket")
 	}
 
@@ -65,11 +71,12 @@ func (a *GRPCRunnerAdapter) mcpCreateTicket(ctx context.Context, tc *middleware.
 
 func (a *GRPCRunnerAdapter) mcpUpdateTicket(ctx context.Context, tc *middleware.TenantContext, payload []byte) (interface{}, *mcpError) {
 	var params struct {
-		TicketSlug string  `json:"ticket_slug"`
-		Title      *string `json:"title"`
-		Content    *string `json:"content"`
-		Status     *string `json:"status"`
-		Priority   *string `json:"priority"`
+		TicketSlug string    `json:"ticket_slug"`
+		Title      *string   `json:"title"`
+		Content    *string   `json:"content"`
+		Status     *string   `json:"status"`
+		Priority   *string   `json:"priority"`
+		Labels     *[]string `json:"labels"`
 	}
 	if err := unmarshalPayload(payload, &params); err != nil {
 		return nil, err
@@ -101,6 +108,23 @@ func (a *GRPCRunnerAdapter) mcpUpdateTicket(ctx context.Context, tc *middleware.
 	t, err = a.ticketService.UpdateTicket(ctx, t.ID, updates)
 	if err != nil {
 		return nil, newMcpError(500, "failed to update ticket")
+	}
+
+	if params.Labels != nil {
+		if err := a.ticketService.ReplaceTicketLabels(ctx, t.ID, tc.OrganizationID, *params.Labels); err != nil {
+			if errors.Is(err, ticketDomain.ErrInvalidLabelName) {
+				return nil, newMcpError(400, "invalid label name")
+			}
+			if errors.Is(err, ticket.ErrTicketNotFound) {
+				return nil, newMcpError(404, "ticket not found")
+			}
+			return nil, newMcpError(500, "failed to update ticket labels")
+		}
+		refreshed, ferr := a.ticketService.GetTicket(ctx, t.ID)
+		if ferr != nil {
+			return nil, newMcpError(500, "failed to load updated ticket")
+		}
+		t = refreshed
 	}
 
 	return map[string]interface{}{"ticket": a.enrichTicketForMCP(ctx, tc.OrganizationID, t, nil)}, nil
