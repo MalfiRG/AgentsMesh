@@ -62,6 +62,7 @@ type TicketRepository interface {
 	GetTicketLabels(ctx context.Context, ticketID int64) ([]*Label, error)
 	AddTicketLabel(ctx context.Context, ticketID, labelID int64) error
 	RemoveTicketLabel(ctx context.Context, ticketID, labelID int64) error
+	ReplaceLabels(ctx context.Context, ticketID, orgID int64, names []string) error
 
 	GetRelation(ctx context.Context, relationID int64) (*Relation, error)
 	CreateRelationPair(ctx context.Context, relation, reverse *Relation) error

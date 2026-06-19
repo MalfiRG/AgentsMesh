@@ -8,6 +8,7 @@ go_library(
         "comment.go",
         "commit.go",
         "label.go",
+        "label_errors.go",
         "merge_request.go",
         "mr_sync_repository.go",
         "relation.go",

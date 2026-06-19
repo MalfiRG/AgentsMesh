@@ -2,9 +2,11 @@ package ticket
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/anthropics/agentsmesh/backend/internal/domain/ticket"
+	"gorm.io/gorm"
 )
 
 func (s *Service) CreateLabel(ctx context.Context, orgID int64, repoID *int64, name, color string) (*ticket.Label, error) {
@@ -84,5 +86,17 @@ func (s *Service) RemoveLabel(ctx context.Context, ticketID, labelID int64) erro
 		return err
 	}
 	slog.InfoContext(ctx, "label removed from ticket", "ticket_id", ticketID, "label_id", labelID)
+	return nil
+}
+
+func (s *Service) ReplaceTicketLabels(ctx context.Context, ticketID, orgID int64, names []string) error {
+	if err := s.repo.ReplaceLabels(ctx, ticketID, orgID, names); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTicketNotFound
+		}
+		slog.ErrorContext(ctx, "failed to replace ticket labels", "ticket_id", ticketID, "org_id", orgID, "error", err)
+		return err
+	}
+	slog.InfoContext(ctx, "ticket labels replaced", "ticket_id", ticketID, "org_id", orgID, "count", len(names))
 	return nil
 }
