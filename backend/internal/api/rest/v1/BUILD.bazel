@@ -39,6 +39,7 @@ go_library(
         "runners_grpc_types.go",
         "runners_query.go",
         "tickets.go",
+        "tickets_labels.go",
     ],
     importpath = "github.com/anthropics/agentsmesh/backend/internal/api/rest/v1",
     visibility = ["//backend:__subpackages__"],

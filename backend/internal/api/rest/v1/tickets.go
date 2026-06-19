@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -50,12 +51,13 @@ type CreateTicketRequest struct {
 }
 
 type UpdateTicketRequest struct {
-	Title        string  `json:"title"`
-	Content      *string `json:"content"`
-	Status       string  `json:"status"`
-	Priority     string  `json:"priority"`
-	RepositoryID *int64  `json:"repository_id"`
-	DueDate      *string `json:"due_date"`
+	Title        string    `json:"title"`
+	Content      *string   `json:"content"`
+	Status       string    `json:"status"`
+	Priority     string    `json:"priority"`
+	RepositoryID *int64    `json:"repository_id"`
+	DueDate      *string   `json:"due_date"`
+	Labels       *[]string `json:"labels"`
 }
 
 type UpdateTicketStatusRequest struct {
@@ -133,6 +135,10 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 		ParentTicketID: parentTicketID,
 	})
 	if err != nil {
+		if errors.Is(err, ticketDomain.ErrInvalidLabelName) {
+			apierr.ValidationError(c, "Invalid label name")
+			return
+		}
 		apierr.InternalError(c, "Failed to create ticket")
 		return
 	}
@@ -197,7 +203,11 @@ func (h *TicketHandler) UpdateTicket(c *gin.Context) {
 		apierr.InternalError(c, "Failed to update ticket")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ticket": t})
+	updated, ok := h.applyLabelUpdate(c, t, tenant.OrganizationID, req.Labels)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ticket": updated})
 }
 
 // DELETE /api/v1/organizations/:slug/tickets/:ticket_slug
