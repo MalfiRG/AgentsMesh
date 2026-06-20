@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { InstalledSkill, InstalledMcpServer } from "@/lib/api";
-import { useAuthStore } from "@/stores/auth";
+import { useCurrentOrg } from "@/stores/auth";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -43,7 +43,7 @@ function ExtensionSection<T extends InstalledSkill | InstalledMcpServer>({
 
 export function CapabilitiesTab({ repositoryId }: CapabilitiesTabProps) {
   const t = useTranslations();
-  const { currentOrg } = useAuthStore();
+  const currentOrg = useCurrentOrg();
   const isAdmin = currentOrg?.role === "owner" || currentOrg?.role === "admin";
 
   const {

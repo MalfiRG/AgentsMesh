@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTicketStore, useFilteredTickets, Ticket, TicketStatus } from "@/stores/ticket";
-import { useAuthStore } from "@/stores/auth";
+import { useCurrentOrg } from "@/stores/auth";
 import { TicketKeyboardHandler } from "@/components/tickets";
 import { CenteredSpinner } from "@/components/ui/spinner";
 import { CreatePodModal } from "@/components/ide/CreatePodModal";
@@ -12,7 +12,7 @@ import { ListViewLayout, BoardViewLayout } from "./components";
 export function TicketsPage() {
   const t = useTranslations();
   const router = useRouter();
-  const { currentOrg } = useAuthStore();
+  const currentOrg = useCurrentOrg();
 
   const viewMode = useTicketStore(state => state.viewMode);
   const fetchTickets = useTicketStore(state => state.fetchTickets);

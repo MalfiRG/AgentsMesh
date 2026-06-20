@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { CheckoutFlow, CancelSubscriptionDialog, SeatManagement, BillingCycleSwitch } from "@/components/billing";
 import type { BillingCycle } from "@/lib/viewModels/billing";
@@ -20,8 +20,9 @@ interface BillingSettingsProps {
 
 export function BillingSettings({ t }: BillingSettingsProps) {
   const { org: orgSlug } = useParams<{ org: string }>();
+  const pathname = usePathname();
   const state = useBillingSettings(t);
-  const currentUrl = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
+  const currentUrl = typeof window !== "undefined" ? `${window.location.origin}${pathname}` : "";
 
   const getUsagePercent = (current: number, max: number): number => {
     if (max === -1) return 0;

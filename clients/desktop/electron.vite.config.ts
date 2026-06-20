@@ -78,6 +78,8 @@ export default defineConfig({
         // env.ts must resolve to the desktop-specific version so it picks up
         // the preload-exposed apiUrl instead of `window.location.origin`.
         { find: /^@\/lib\/env$/, replacement: resolve(desktopSrc, "lib/env") },
+        // Precise match must precede @/lib so desktop drives locale via DesktopIntlProvider.
+        { find: /^@\/lib\/i18n\/locale-switcher$/, replacement: resolve(desktopSrc, "lib/i18n/locale-switcher") },
         { find: "@/lib", replacement: resolve(webSrc, "lib") },
         { find: "@/messages", replacement: resolve(webSrc, "messages") },
         // `@/app/...` is the Next.js app-router path; some shared components

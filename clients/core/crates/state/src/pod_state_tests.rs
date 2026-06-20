@@ -99,6 +99,31 @@ fn update_pod_status_with_timestamp_guard() {
 }
 
 #[test]
+fn update_pod_status_empty_status_keeps_old() {
+    let mut s = PodState::new();
+    let mut pod = make_pod("p1", "running");
+    pod.agent_status = "idle".into();
+    s.upsert_pod(pod, None);
+    s.update_pod_status("p1", "", Some("executing"), None, None, None);
+    let p = s.get_pod("p1").unwrap();
+    assert_eq!(p.status, "running");
+    assert_eq!(p.agent_status, "executing");
+}
+
+#[test]
+fn update_pod_status_empty_status_preserves_error_fields() {
+    let mut s = PodState::new();
+    let mut pod = make_pod("p1", "running");
+    pod.error_code = Some("E001".into());
+    pod.error_message = Some("boom".into());
+    s.upsert_pod(pod, None);
+    s.update_pod_status("p1", "", Some("executing"), None, None, None);
+    let p = s.get_pod("p1").unwrap();
+    assert_eq!(p.error_code.as_deref(), Some("E001"));
+    assert_eq!(p.error_message.as_deref(), Some("boom"));
+}
+
+#[test]
 fn update_pod_status_syncs_current_pod() {
     let mut s = PodState::new();
     let pod = make_pod("p1", "running");

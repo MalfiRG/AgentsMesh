@@ -35,7 +35,7 @@ export type {
 // Most legacy callers don't pass orgSlug — they let the wasm session carry
 // it. With Connect every RPC needs the slug on the request body. We let
 // callers continue to invoke without slug; tenant-aware components must now
-// pass it through (see useBillingData migration). The default empty string
+// pass it through (see useBillingSettings migration). The default empty string
 // is a deliberate ResolveOrgScope-fail at the boundary so the call surfaces
 // the missing context instead of silently hitting the wrong org.
 export const billingApi = {

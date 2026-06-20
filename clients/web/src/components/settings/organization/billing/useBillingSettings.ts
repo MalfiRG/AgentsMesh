@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import type { BillingOverview, SubscriptionPlan, DeploymentInfo } from "@/lib/viewModels/billing";
 import { readCurrentOrg } from "@/stores/auth";
 import {
@@ -51,6 +51,8 @@ export interface BillingActions {
 
 export function useBillingSettings(t: TranslationFn): BillingState & BillingActions {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<BillingOverview | null>(null);
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
@@ -63,17 +65,6 @@ export function useBillingSettings(t: TranslationFn): BillingState & BillingActi
   const [upgrading, setUpgrading] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  useEffect(() => {
-    const payment = searchParams.get("payment");
-    if (payment === "success") {
-      setPaymentMessage({ type: "success", text: t("settings.billingPage.paymentSuccess") });
-      window.history.replaceState({}, "", window.location.pathname);
-    } else if (payment === "cancelled") {
-      setPaymentMessage({ type: "error", text: t("settings.billingPage.paymentCancelled") });
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, [searchParams, t]);
 
   const loadBillingData = useCallback(async () => {
     setLoading(true);
@@ -96,6 +87,21 @@ export function useBillingSettings(t: TranslationFn): BillingState & BillingActi
   }, [t]);
 
   useEffect(() => { loadBillingData(); }, [loadBillingData]);
+
+  useEffect(() => {
+    const payment = searchParams.get("payment");
+    if (payment !== "success" && payment !== "cancelled") return;
+    setPaymentMessage(
+      payment === "success"
+        ? { type: "success", text: t("settings.billingPage.paymentSuccess") }
+        : { type: "error", text: t("settings.billingPage.paymentCancelled") },
+    );
+    if (payment === "success") loadBillingData();
+    const next = new URLSearchParams(searchParams);
+    next.delete("payment");
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  }, [searchParams, t, router, pathname, loadBillingData]);
 
   const handleFreePlanSelect = async (planName: string) => {
     setUpgrading(true);

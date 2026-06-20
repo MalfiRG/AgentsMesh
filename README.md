@@ -6,7 +6,7 @@
 
 <p align="center">
   The AI Agent Workforce Platform.<br/>
-  Give every team member an AI agent squad — assign tasks, track progress, and let them collaborate autonomously.
+  Run a hundred AI agents across your own machines — and command them all from one console.
 </p>
 
 <p align="center">
@@ -32,32 +32,78 @@
 
 ---
 
-## What is AgentsMesh?
+## The problem: one operator, a hundred agents
 
-AgentsMesh is **The AI Agent Workforce Platform** — where teams scale beyond headcount. Instead of running agents one-at-a-time on your local machine, AgentsMesh lets you spin up **remote AI workstations (AgentPods)**, coordinate **multi-agent collaboration** through channels and pod bindings, and track everything via integrated **task management** — all from a single web console.
+AI coding agents have made individual engineers wildly productive — but individual productivity has a ceiling. The next 10x isn't a smarter agent; it's **running many agents at once**, and directing them like a team.
 
-Individual productivity has peaked. The next frontier is organizational. AgentsMesh turns AI agents from solo tools into a coordinated workforce.
+That ambition breaks the moment you try it for real:
 
-**BYOK (Bring Your Own Key)** — You provide your own AI API keys. No usage caps. Full cost control.
+- A hundred agents won't fit on one laptop.
+- Nobody can babysit a hundred terminals.
+- Each agent needs its own clean, isolated workspace — or they corrupt each other's state.
+- Long-running agents stall, get stuck, and silently die.
+- Agents working in isolation never compound into a team.
 
-## Features
+What's missing isn't the agent. It's the **control layer** that turns one operator into the director of an agent workforce — the layer that schedules agents onto machines, isolates them, keeps them alive, lets them collaborate, and puts all of it on one screen.
 
-- **AgentPod** — Remote AI workstations with web terminal, Git worktree isolation, and real-time streaming. Run multiple concurrent pods.
-- **Multi-Agent Collaboration** — Coordinate agents through channels and pod bindings. Visualize the collaboration topology in real-time.
-- **Task Management** — Kanban board with ticket-pod binding, progress tracking, and MR/PR integration.
-- **Self-Hosted Runners** — Deploy runners on your own infrastructure. Your code never leaves your environment.
-- **Multi-Agent Support** — Claude Code, Codex CLI, Gemini CLI, Aider, OpenCode, and any custom terminal-based agent.
-- **Multi-Git Provider** — GitLab, GitHub, and Gitee integration.
-- **Multi-Tenant** — Organization > Team > User hierarchy with row-level isolation.
-- **Enterprise Ready** — SSO, RBAC, audit logs, air-gapped deployment support.
+**AgentsMesh is that layer.**
+
+## From problem to platform
+
+Every part of AgentsMesh exists to answer one question: *how does a single person reliably run, watch, and steer a hundred agents?* Each capability is the direct answer to a wall you hit when you scale.
+
+| The wall you hit | What AgentsMesh gives you |
+|---|---|
+| 100 agents won't run on one machine | **Runner fleet** — install self-hosted runners across any number of machines. Each advertises its capacity (`max_concurrent_pods`), and agents are scheduled onto the runner you pick or an available one from the pool. Your code never leaves your infrastructure. |
+| Every agent needs a clean, isolated environment | **Workspace isolation** — each agent runs in its own pod with a dedicated Git worktree sandbox (`sandboxes/{pod}/workspace/`), private credentials, and its own branch. Concurrent agents never step on each other. |
+| You can't watch a hundred terminals | **One console, every screen** — Web, Desktop (Electron), and iOS (SwiftUI) clients, all driven by the *same* Rust core. Paginated pod sidebar, multi-pane workspace, and real-time terminal streaming let one person hold many agents in view. |
+| Long-running agents stall and need babysitting | **Autopilot** — a control agent watches a pod and sends the next instruction the moment it goes idle, with iteration caps, decision history, and human takeover/handback. Self-healing, unattended runs. |
+| Agents working alone don't compound | **Mesh & Channels** — bind pods together, let them talk over channels with `@mentions`, and watch the collaboration topology update in real time. |
+
+The rest is plumbing built so that chain holds up under load: a **control-plane / data-plane split** — orchestration over gRPC with mTLS, terminal bytes over a stateless Relay cluster — so the backend never bottlenecks on PTY traffic, no matter how many agents are streaming at once.
+
+## Core concepts
+
+- **AgentPod** — one agent's isolated execution environment: a PTY terminal, a Git worktree sandbox, and a real-time output stream.
+- **Runner** — a self-hosted daemon you install on your own machines. It connects to the backend over gRPC+mTLS and spawns pods. Register as many as you need; pods schedule across the fleet.
+- **Workspace** — the per-pod sandbox: an isolated Git worktree plus private credentials, so concurrent agents never collide and every run is recoverable.
+- **Autopilot** — autonomous, self-healing control of a pod by a *control agent*, with iteration limits, decision history, and human takeover at any point.
+- **Mesh & Channel** — the collaboration fabric: pods bound into a topology, communicating over channels with `@mentions`.
+- **Ticket** — a unit of work on a Kanban board, bindable to a pod with progress and MR/PR tracking.
+
+## Architecture
+
+AgentsMesh separates the **control plane** from the **data plane**: orchestration commands travel over gRPC with mTLS, while terminal I/O streams through a stateless Relay cluster. The backend never touches a single PTY byte — which is what lets the fleet scale.
+
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="AgentsMesh Architecture" width="680" />
+</p>
+
+**Server-side (Go)**
+
+| Component | Role |
+|-----------|------|
+| **Backend** | API server (Gin + GORM) — auth, org/team/user, pod lifecycle, tickets, billing, and the PKI that issues runner certs |
+| **Relay** | WebSocket relay for the terminal data plane — low-latency pub/sub between runners and clients |
+| **Runner** | Self-hosted daemon — connects to the backend (gRPC+mTLS), spawns isolated PTY pods that run the actual agents |
+
+**Client-side**
+
+| Component | Role |
+|-----------|------|
+| **Rust Core** | Business-logic SSOT — 10 crates compiled to WASM (web/desktop) and a native dylib via UniFFI (iOS). One cache, one set of services, every client. |
+| **Web** | Next.js console — terminal, Kanban, real-time mesh topology |
+| **Desktop** | Electron app — reuses the web UI, talks to a native Rust core over NAPI |
+| **iOS** | SwiftUI + TCA — the same Rust core via UniFFI bindings |
+| **Web-Admin** | Internal admin console — user/org/runner management, audit logs |
 
 ## Getting Started
 
-The fastest way to use AgentsMesh is through our hosted service at **[agentsmesh.ai](https://agentsmesh.ai)** — sign up, connect your Git provider, and start running agents in minutes.
+The fastest way to use AgentsMesh is the hosted service at **[agentsmesh.ai](https://agentsmesh.ai)** — sign up, connect your Git provider, and start running agents in minutes. Bring your own AI API keys (**BYOK**): no usage caps, full cost control.
 
-### 1. Install the Runner
+### 1. Install a Runner
 
-The Runner is a lightweight daemon that runs on your machine and executes AI agents locally. Your code stays on your infrastructure.
+The Runner is a lightweight daemon that runs on your machine and executes AI agents locally. Your code stays on your infrastructure. Install one per machine you want in the fleet.
 
 ```bash
 curl -fsSL https://agentsmesh.ai/install.sh | sh
@@ -96,27 +142,11 @@ agentsmesh-runner service install
 agentsmesh-runner service start
 ```
 
-Once the runner is online, create an **AgentPod** from the web console and start coding with your AI agents.
-
-## Architecture
-
-AgentsMesh separates **control plane** from **data plane** — orchestration commands travel through gRPC with mTLS, while terminal I/O streams through a Relay cluster.
-
-<p align="center">
-  <img src="docs/images/architecture.svg" alt="AgentsMesh Architecture" width="680" />
-</p>
-
-| Component | Description |
-|-----------|-------------|
-| **Backend** | Go API server — auth, org/team management, pod lifecycle, task management |
-| **Web** | Next.js frontend — dashboard, web terminal, kanban, topology visualization |
-| **Relay** | Terminal relay cluster — low-latency WebSocket pub/sub between runners and browsers |
-| **Runner** | Self-hosted Go daemon — connects to Backend (gRPC+mTLS) and Relay (WebSocket), runs AI agents in isolated PTY sandboxes |
-| **Web-Admin** | Internal admin console — user/org/runner management, audit logs |
+Once the runner is online, create an **AgentPod** from any console (Web / Desktop / iOS) and start putting agents to work.
 
 ## Quick Start
 
-### One-Command Setup (Docker)
+Run the whole stack locally with one command.
 
 ```bash
 git clone https://github.com/AgentsMesh/AgentsMesh.git
@@ -179,11 +209,13 @@ agentsmesh/backend:1.0.0
 agentsmesh/backend:1.0
 ```
 
-See [deploy/selfhost/](deploy/selfhost/) for self-hosted deployment guide.
+See [deploy/selfhost/](deploy/selfhost/) for the self-hosted deployment guide.
 
 </details>
 
 ## Supported Agents
+
+Any terminal-based agent works. The built-ins:
 
 | Agent | Provider | Description |
 |-------|----------|-------------|
@@ -199,12 +231,14 @@ See [deploy/selfhost/](deploy/selfhost/) for self-hosted deployment guide.
 | Layer | Technology |
 |-------|-----------|
 | Backend | Go (Gin + GORM) |
-| Frontend | Next.js (App Router) + TypeScript + Tailwind CSS |
+| Client Core | Rust → WASM (web/desktop) + UniFFI (iOS) — shared business logic |
+| Web / Desktop | Next.js (App Router) + TypeScript + Tailwind · Electron |
+| iOS | SwiftUI + TCA |
 | Database | PostgreSQL + Redis |
 | Storage | MinIO (S3-compatible) |
 | API | REST + gRPC (bidirectional streaming) |
 | Security | mTLS for runner connections, JWT for web auth |
-| Real-time | gRPC streaming (Runner ↔ Backend), WebSocket (Relay ↔ Browser) |
+| Real-time | gRPC streaming (Runner ↔ Backend), WebSocket (Relay ↔ Client) |
 | Reverse Proxy | Traefik |
 
 ## Project Structure
@@ -212,14 +246,15 @@ See [deploy/selfhost/](deploy/selfhost/) for self-hosted deployment guide.
 ```
 AgentsMesh/
 ├── backend/          # Go API server
-├── clients/          # Frontend clients (web, web-admin, desktop)
-│   ├── web/          # Next.js frontend
-│   ├── web-admin/    # Admin console (Next.js)
-│   └── desktop/      # Electron desktop app
-├── runner/           # Self-hosted runner daemon (Go)
 ├── relay/            # Terminal relay server (Go)
+├── runner/           # Self-hosted runner daemon (Go)
+├── clients/
+│   ├── core/         # Rust business-logic SSOT (WASM + UniFFI)
+│   ├── web/          # Next.js console
+│   ├── web-admin/    # Admin console (Next.js)
+│   ├── desktop/      # Electron desktop app
+│   └── ios/          # SwiftUI + TCA iOS app
 ├── proto/            # Protocol Buffers definitions
-├── ci/               # CI Dockerfiles
 ├── deploy/
 │   ├── dev/          # Docker Compose dev environment
 │   └── selfhost/     # Self-hosted deployment guide

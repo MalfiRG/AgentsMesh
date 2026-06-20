@@ -81,6 +81,17 @@ fn update_runner_status_removes_from_available() {
 }
 
 #[test]
+fn update_runner_status_empty_keeps_status_and_availability() {
+    let mut s = RunnerState::new();
+    let r = make_runner(1, "r1", "online", true, 4, 0);
+    s.set_runners(vec![r.clone()]);
+    s.set_available_runners(vec![r]);
+    s.update_runner_status(1, "");
+    assert_eq!(s.get_runner(1).unwrap().status, "online");
+    assert_eq!(s.available_runners().len(), 1, "empty status must not evict from available_runners");
+}
+
+#[test]
 fn can_accept_pods_true() {
     let r = make_runner(1, "r1", "online", true, 4, 2);
     assert!(RunnerState::can_accept_pods(&r));

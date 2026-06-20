@@ -1,5 +1,5 @@
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuthStore } from "@/stores/auth";
+import { useAuthStore, useCurrentUser, useCurrentOrg } from "@/stores/auth";
 import { Button } from "@/components/ui/button";
 import { LanguageSettings, ThemeSettings, NotificationSettings, AgentCredentialsSettings, AgentConfigPage, GitSettingsContent } from "@/components/settings";
 import { GeneralSettings, MembersSettings, BillingSettings, RunnersSettings, APIKeysSettings, ExtensionsSettings, UsageSettings } from "@/components/settings/organization";
@@ -11,7 +11,7 @@ export function SettingsPage() {
   const searchParams = useSearchParams();
   const scope = searchParams.get("scope") || "personal";
   const activeTab = searchParams.get("tab") || "general";
-  const { currentOrg } = useAuthStore();
+  const currentOrg = useCurrentOrg();
   const t = useTranslations();
 
   const renderContent = () => {
@@ -69,7 +69,8 @@ export function SettingsPage() {
 function PersonalGeneralSettings() {
   const router = useRouter();
   const t = useTranslations();
-  const { user, logout } = useAuthStore();
+  const user = useCurrentUser();
+  const logout = useAuthStore((s) => s.logout);
 
   const handleLogout = () => {
     logout();

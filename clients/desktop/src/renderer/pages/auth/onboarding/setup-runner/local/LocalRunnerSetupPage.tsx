@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { useAuthStore } from "@/stores/auth";
+import { useCurrentOrg } from "@/stores/auth";
 import { runnerApi, RunnerData } from "@/lib/api/facade/runner";
 import { isApiErrorCode } from "@/lib/api/errors";
 import { useServerUrl } from "@/hooks/useServerUrl";
@@ -14,7 +14,7 @@ import { SetupSteps } from "./components/SetupSteps";
 export function LocalRunnerSetupPage() {
   const router = useRouter();
   const t = useTranslations();
-  const { currentOrg } = useAuthStore();
+  const currentOrg = useCurrentOrg();
   const serverUrl = useServerUrl();
   const [token, setToken] = useState<string | null>(null);
   const [tokenCopied, setTokenCopied] = useState(false);

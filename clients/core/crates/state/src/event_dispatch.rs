@@ -107,10 +107,9 @@ pub fn dispatch(state: &mut AppState, event: &RealtimeEvent) {
         }
         EventType::PodAgentStatusChanged => {
             if let Some(key) = event.data.get("pod_key").and_then(|v| v.as_str()) {
-                let status = event.data.get("status").and_then(|v| v.as_str()).unwrap_or("");
                 let agent = event.data.get("agent_status").and_then(|v| v.as_str());
-                state.pods.update_pod_status(key, status, agent, None, None, Some(event.timestamp));
-                state.mesh.update_node_status(key, status, agent);
+                if let Some(a) = agent { state.pods.update_agent_status(key, a); }
+                state.mesh.update_node_status(key, "", agent);
             }
         }
         EventType::PodTerminated => {
@@ -186,9 +185,7 @@ pub fn dispatch(state: &mut AppState, event: &RealtimeEvent) {
             // status in place so the board/badge updates immediately.
             if let Some(slug) = jstr(&event.data, "slug") {
                 if let Some(status) = jstr(&event.data, "status") {
-                    if !status.is_empty() {
-                        state.tickets.update_ticket_status(slug, status);
-                    }
+                    state.tickets.update_ticket_status(slug, status);
                 }
                 state.pending_refetch_ticket_slugs.push(slug.to_string());
             }
@@ -213,9 +210,7 @@ pub fn dispatch(state: &mut AppState, event: &RealtimeEvent) {
             // — not a full Runner. Apply the status transition in place.
             if let Some(id) = ji64(&event.data, "runner_id") {
                 let status = jstr(&event.data, "status").unwrap_or("");
-                if !status.is_empty() {
-                    state.runners.update_runner_status(id, status);
-                }
+                state.runners.update_runner_status(id, status);
             }
         }
         EventType::LoopRunStarted => {
@@ -563,6 +558,40 @@ mod tests {
         // terminated flips the mesh node status too.
         dispatch(&mut s, &make_event(EventType::PodTerminated, json!({"pod_key":"p1"})));
         assert_eq!(s.mesh.get_node_by_key("p1").unwrap().status, "terminated");
+    }
+
+    #[test]
+    fn pod_agent_status_changed_keeps_pod_status() {
+        let mut s = AppState::new();
+        s.pods.upsert_pod(Pod {
+            pod_key: "p1".into(), status: "running".into(),
+            agent_slug: "claude".into(), agent_status: "idle".into(), ..Default::default()
+        }, Some(1));
+        dispatch(&mut s, &make_event(EventType::PodAgentStatusChanged, json!({"pod_key":"p1","agent_status":"executing"})));
+        let p = s.pods.get_pod("p1").unwrap();
+        assert_eq!(p.status, "running", "agent-only event must not blank status");
+        assert_eq!(p.agent_status, "executing");
+    }
+
+    #[test]
+    fn agent_status_event_does_not_poison_status_watermark() {
+        let mut s = AppState::new();
+        s.pods.upsert_pod(Pod {
+            pod_key: "p1".into(), status: "running".into(),
+            agent_slug: "claude".into(), ..Default::default()
+        }, Some(100));
+        let agent_evt = RealtimeEvent {
+            timestamp: 200,
+            ..make_event(EventType::PodAgentStatusChanged, json!({"pod_key":"p1","agent_status":"executing"}))
+        };
+        dispatch(&mut s, &agent_evt);
+        let term_evt = RealtimeEvent {
+            timestamp: 150,
+            ..make_event(EventType::PodTerminated, json!({"pod_key":"p1"}))
+        };
+        dispatch(&mut s, &term_evt);
+        assert_eq!(s.pods.get_pod("p1").unwrap().status, "terminated",
+            "agent heartbeat must not advance the status watermark and drop a later terminated event");
     }
 
     #[test]

@@ -34,6 +34,18 @@ fn set_tickets() {
 }
 
 #[test]
+fn update_ticket_status_empty_keeps_status() {
+    let mut s = TicketState::new();
+    s.set_tickets(vec![tk("T-1", "a")]);
+    s.update_ticket_status("T-1", "");
+    assert_eq!(
+        s.get_tickets().iter().find(|t| t.slug == "T-1").unwrap().status,
+        ticket_status::TODO,
+        "empty status must not blank the ticket"
+    );
+}
+
+#[test]
 fn add_ticket() {
     let mut s = TicketState::new();
     s.add_ticket(tk("T-1", "a"));

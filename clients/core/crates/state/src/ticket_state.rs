@@ -100,6 +100,7 @@ impl TicketState {
     }
 
     pub fn update_ticket_status(&mut self, slug: &str, status: &str) {
+        if status.is_empty() { return; }
         tracing::info!(target: "ticket", slug, status, "status changed");
         if let Some(t) = self.tickets.iter_mut().find(|t| t.slug == slug) {
             t.status = status.to_string();

@@ -94,10 +94,12 @@ impl PodState {
         let error_code_owned = error_code.map(String::from);
         let error_message_owned = error_message.map(String::from);
         let updater = |pod: &mut Pod| {
-            pod.status = status_owned.clone();
+            if !status_owned.is_empty() {
+                pod.status = status_owned.clone();
+                pod.error_code = error_code_owned.clone();
+                pod.error_message = error_message_owned.clone();
+            }
             if let Some(ref as_) = agent_status_owned { pod.agent_status = as_.clone(); }
-            pod.error_code = error_code_owned.clone();
-            pod.error_message = error_message_owned.clone();
         };
         if let Some(p) = self.pods.iter_mut().find(|p| p.pod_key == pod_key) {
             updater(p);

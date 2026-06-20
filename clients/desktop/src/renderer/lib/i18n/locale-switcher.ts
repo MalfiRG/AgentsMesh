@@ -1,18 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback } from "react";
-import { Locale, LOCALE_COOKIE, locales } from "./config";
+import { Locale, locales } from "@/lib/i18n/config";
+import { LOCALE_STORAGE_KEY, LOCALE_CHANGE_EVENT } from "../../providers/IntlProvider";
 
 export function useSetLocale() {
-  const router = useRouter();
-  return useCallback(
-    (newLocale: Locale) => {
-      if (!locales.includes(newLocale)) return;
-      document.cookie = `${LOCALE_COOKIE}=${newLocale}; path=/; max-age=${60 * 60 * 24 * 365}`;
-      document.documentElement.lang = newLocale;
-      router.refresh();
-    },
-    [router]
-  );
+  return useCallback((newLocale: Locale) => {
+    if (!locales.includes(newLocale)) return;
+    localStorage.setItem(LOCALE_STORAGE_KEY, newLocale);
+    document.documentElement.lang = newLocale;
+    window.dispatchEvent(new CustomEvent(LOCALE_CHANGE_EVENT, { detail: newLocale }));
+  }, []);
 }

@@ -28,6 +28,11 @@ test.describe("Auth · authenticated pages render real user", () => {
     await expect(page.getByText(TEST_USER.email)).toBeVisible({ timeout: 5000 });
   });
 
+  test("dashboard org settings shows dev user's email", async ({ page }) => {
+    await gotoHash(page, `/${TEST_ORG_SLUG}/settings`);
+    await expect(page.getByText(TEST_USER.email)).toBeVisible({ timeout: 10_000 });
+  });
+
   test("dashboard route uses dev org slug (not /login)", async ({ page }) => {
     // Sanity: with proper bootstrap + isAuthenticated, RootRedirect lands
     // us in /{orgSlug}/workspace, not /login. Catches a useIsAuthenticated

@@ -84,6 +84,7 @@ impl RunnerState {
     }
 
     pub fn update_runner_status(&mut self, id: i64, status: &str) {
+        if status.is_empty() { return; }
         tracing::info!(target: "runner", runner_id = id, status, "status changed");
         for r in &mut self.runners {
             if r.id == id {

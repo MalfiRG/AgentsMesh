@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionPlan, BillingCycle, OrderType, CheckoutResponse, DeploymentInfo } from "@/lib/viewModels/billing";
 import { createCheckoutConnect } from "@/lib/api/facade/billingConnect";
@@ -29,13 +29,19 @@ export function CheckoutFlow({
   deploymentInfo, t, onCheckoutCreated, onError, onCancel,
 }: CheckoutFlowProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [selectedCycle, setSelectedCycle] = useState<BillingCycle>(billingCycle);
   const [selectedSeats, setSelectedSeats] = useState(seats);
   const [checkoutResponse, setCheckoutResponse] = useState<CheckoutResponse | null>(null);
 
   const { openCheckout: openLemonCheckout } = useLemonSqueezy({
-    onCheckoutSuccess: () => { router.refresh(); window.location.href = `${currentUrl}?payment=success`; },
+    onCheckoutSuccess: () => {
+      const next = new URLSearchParams(searchParams);
+      next.set("payment", "success");
+      router.replace(`${pathname}?${next.toString()}`);
+    },
     onCheckoutClose: () => { setLoading(false); },
   });
 
