@@ -1,10 +1,33 @@
 package client
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	runnerv1 "github.com/anthropics/agentsmesh/proto/gen/go/runner/v1"
 )
+
+// installFakeAgent writes a throwaway executable onto PATH and returns the
+// command name to probe for, keeping these tests independent of whatever tools
+// happen to be installed (the bazel sandbox has no `go` on PATH).
+func installFakeAgent(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	name := "fakeagent"
+	file := filepath.Join(dir, name)
+	body := "#!/bin/sh\necho 'fakeagent v1.2.3'\n"
+	if runtime.GOOS == "windows" {
+		file += ".cmd"
+		body = "@echo fakeagent v1.2.3\r\n"
+	}
+	if err := os.WriteFile(file, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return name
+}
 
 func TestParseVersionFromOutput(t *testing.T) {
 	tests := []struct {
@@ -41,10 +64,11 @@ func TestParseVersionFromOutput(t *testing.T) {
 
 func TestAgentProbeProbeAll(t *testing.T) {
 	probe := NewAgentProbe()
+	cmd := installFakeAgent(t)
 
-	// Probe with an agent that definitely exists (go) and one that doesn't
+	// Probe with an agent that exists (fake on PATH) and ones that don't
 	agents := []*runnerv1.AgentInfo{
-		{Slug: "test-go", Command: "go", Name: "Go"},
+		{Slug: "test-go", Command: cmd, Name: "Go"},
 		{Slug: "nonexistent", Command: "this-command-does-not-exist-xyz", Name: "Nonexistent"},
 		{Slug: "no-command", Command: "", Name: "No Command"},
 	}
@@ -71,10 +95,11 @@ func TestAgentProbeProbeAll(t *testing.T) {
 
 func TestAgentProbeProbeAndDiff_NoChanges(t *testing.T) {
 	probe := NewAgentProbe()
+	cmd := installFakeAgent(t)
 
 	// Initial probe
 	agents := []*runnerv1.AgentInfo{
-		{Slug: "test-go", Command: "go", Name: "Go"},
+		{Slug: "test-go", Command: cmd, Name: "Go"},
 	}
 	probe.ProbeAll(agents)
 
@@ -87,10 +112,11 @@ func TestAgentProbeProbeAndDiff_NoChanges(t *testing.T) {
 
 func TestAgentProbeProbeAndDiff_AgentRemoved(t *testing.T) {
 	probe := NewAgentProbe()
+	cmd := installFakeAgent(t)
 
-	// Initial probe with "go" agent
+	// Initial probe with the fake agent present
 	agents := []*runnerv1.AgentInfo{
-		{Slug: "test-go", Command: "go", Name: "Go"},
+		{Slug: "test-go", Command: cmd, Name: "Go"},
 	}
 	probe.ProbeAll(agents)
 
@@ -118,6 +144,7 @@ func TestAgentProbeProbeAndDiff_AgentRemoved(t *testing.T) {
 
 func TestAgentProbeProbeAndDiff_NewAgent(t *testing.T) {
 	probe := NewAgentProbe()
+	cmd := installFakeAgent(t)
 
 	// Initial probe with nonexistent agent
 	agents := []*runnerv1.AgentInfo{
@@ -125,10 +152,10 @@ func TestAgentProbeProbeAndDiff_NewAgent(t *testing.T) {
 	}
 	probe.ProbeAll(agents)
 
-	// Now add "go" to the agents
+	// Now add the fake agent to the agents
 	probe.mu.Lock()
 	probe.agents = []*runnerv1.AgentInfo{
-		{Slug: "test-go", Command: "go", Name: "Go"},
+		{Slug: "test-go", Command: cmd, Name: "Go"},
 	}
 	probe.mu.Unlock()
 
