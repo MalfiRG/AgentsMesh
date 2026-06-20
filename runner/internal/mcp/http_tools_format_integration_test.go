@@ -94,6 +94,17 @@ func TestFormatIntegration_SendChannelMessage(t *testing.T) {
 	assertContains(t, text, "Message #100")
 	assertContains(t, text, "From: test-pod")
 	assertContains(t, text, "Content: Hello")
+	assertContains(t, text, "No pods were mentioned")
+	assertNotContains(t, text, `"delivery_notice"`)
+}
+
+func TestFormatIntegration_SendChannelMessageWithMentions(t *testing.T) {
+	server := setupServerWithMockClient(t)
+	text := callTool(t, server, "send_channel_message", `{"channel_id":1,"content":"Hello","mentions":["3-134-02fb30bf"]}`)
+
+	assertContains(t, text, "Message #100")
+	assertContains(t, text, "Content: Hello")
+	assertNotContains(t, text, "No pods were mentioned")
 }
 
 func TestFormatIntegration_GetPodSnapshot(t *testing.T) {
