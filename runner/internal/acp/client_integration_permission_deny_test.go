@@ -61,19 +61,22 @@ func TestACPClient_PermissionRequest_Deny(t *testing.T) {
 	req := permReqs[0]
 	mu.Unlock()
 
-	// State should be waiting_permission before denial.
-	if client.State() != StateWaitingPermission {
-		t.Errorf("pre-deny state = %s, want %s", client.State(), StateWaitingPermission)
+	// Wait until the client reflects waiting_permission before denying: the
+	// OnPermissionRequest callback can fire just before the state is set. The
+	// post-deny processing transition is verified by the sequence check below
+	// (sampling client.State() right after the deny races the mock continuing).
+	deadlineWP := time.After(2 * time.Second)
+	for client.State() != StateWaitingPermission {
+		select {
+		case <-deadlineWP:
+			t.Fatalf("timeout waiting for waiting_permission, state=%s", client.State())
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 
 	// Deny the permission.
 	if err := client.RespondToPermission(req.RequestID, false, nil); err != nil {
 		t.Fatalf("RespondToPermission(deny): %v", err)
-	}
-
-	// After denial, state should transition to processing (mock agent continues).
-	if client.State() != StateProcessing {
-		t.Errorf("post-deny state = %s, want %s", client.State(), StateProcessing)
 	}
 
 	// Wait for content (mock agent sends content regardless of deny).

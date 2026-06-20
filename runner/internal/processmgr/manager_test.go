@@ -57,6 +57,22 @@ func waitForExit(t *testing.T, p Handle, timeout time.Duration) ExitInfo {
 	}
 }
 
+// waitForEmptyRegistry polls until the manager has unregistered all handles.
+// reapLoopBody closes Done() (which waitForExit observes) before it calls
+// mgr.unregister, so the registry empties slightly after the process exits.
+func waitForEmptyRegistry(t *testing.T, mgr Manager, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if n := len(mgr.List()); n == 0 {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("registry not empty within %s: %d entries", timeout, n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // assertReaped is platform-dispatched: on Unix it calls waitpid(WNOHANG) and
 // expects ECHILD (the kernel has already reaped the child); on Windows there
 // is no zombie state to assert against, so the helper is a no-op there. See
@@ -87,10 +103,7 @@ func TestModeNormal_NaturalExit_NoZombie(t *testing.T) {
 	pid := p.PID()
 	waitForExit(t, p, 5*time.Second)
 	assertReaped(t, pid)
-
-	if list := mgr.List(); len(list) != 0 {
-		t.Fatalf("expected registry empty after reap, got %d entries", len(list))
-	}
+	waitForEmptyRegistry(t, mgr, 2*time.Second)
 }
 
 func TestModeNormal_Stop_KillsAndReaps(t *testing.T) {
