@@ -1,6 +1,11 @@
 package mcp
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/anthropics/agentsmesh/runner/internal/mcp/tools"
+)
 
 const sendChannelMessageDesc = `Post a message to a collaboration channel.
 
@@ -42,12 +47,29 @@ func normalizePodMentions(mentions []string) []string {
 	return out
 }
 
+// passiveDelivery carries the passive-send notice alongside the message. It
+// implements tools.TextFormatter so the no-mentions path keeps the key-value
+// text contract every other tool returns (a plain map fell back to JSON), while
+// the json tags preserve the {message, delivery_notice} shape for any marshaler.
+type passiveDelivery struct {
+	Message        interface{} `json:"message"`
+	DeliveryNotice string      `json:"delivery_notice"`
+}
+
+func (d passiveDelivery) FormatText() string {
+	var inner string
+	if tf, ok := d.Message.(tools.TextFormatter); ok {
+		inner = tf.FormatText()
+	} else {
+		data, _ := json.MarshalIndent(d.Message, "", "  ")
+		inner = string(data)
+	}
+	return inner + "\n\n" + d.DeliveryNotice
+}
+
 func annotateChannelDelivery(message interface{}, mentions []string) interface{} {
 	if len(mentions) > 0 {
 		return message
 	}
-	return map[string]interface{}{
-		"message":         message,
-		"delivery_notice": passiveSendNotice,
-	}
+	return passiveDelivery{Message: message, DeliveryNotice: passiveSendNotice}
 }

@@ -1,21 +1,33 @@
 package mcp
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestAnnotateChannelDelivery_NoMentionsAttachesNotice(t *testing.T) {
 	msg := map[string]interface{}{"id": 7}
 
 	out := annotateChannelDelivery(msg, nil)
 
-	wrapped, ok := out.(map[string]interface{})
+	wrapped, ok := out.(passiveDelivery)
 	if !ok {
-		t.Fatalf("expected wrapped map, got %T", out)
+		t.Fatalf("expected passiveDelivery, got %T", out)
 	}
-	if wrapped["delivery_notice"] != passiveSendNotice {
-		t.Errorf("expected passive notice, got %v", wrapped["delivery_notice"])
+	if wrapped.DeliveryNotice != passiveSendNotice {
+		t.Errorf("expected passive notice, got %v", wrapped.DeliveryNotice)
 	}
-	if wrapped["message"] == nil {
-		t.Error("expected original message preserved under \"message\"")
+	if wrapped.Message == nil {
+		t.Error("expected original message preserved under Message")
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"delivery_notice"`) || !strings.Contains(string(data), `"message"`) {
+		t.Errorf("json shape must keep message+delivery_notice, got %s", data)
 	}
 }
 
