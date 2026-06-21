@@ -503,7 +503,9 @@ The runner's `/home/runner/.pi` is an isolated Docker volume; it has no auth unt
 test -f ~/.pi/agent/auth.json && echo "host token present"
 docker compose -f deploy/dev/docker-compose.yml exec runner mkdir -p /home/runner/.pi/agent
 docker compose -f deploy/dev/docker-compose.yml cp ~/.pi/agent/auth.json runner:/home/runner/.pi/agent/auth.json
-docker compose -f deploy/dev/docker-compose.yml exec runner chown -R runner:runner /home/runner/.pi
+# chown must run as root: the runner container runs as user 1000:1000
+# (docker-compose.yml `user: "1000:1000"`) and `cp` lands the file as root.
+docker compose -f deploy/dev/docker-compose.yml exec --user root runner chown -R runner:runner /home/runner/.pi
 ```
 
 Expected: `auth.json` present at `/home/runner/.pi/agent/auth.json` owned by `runner`.
