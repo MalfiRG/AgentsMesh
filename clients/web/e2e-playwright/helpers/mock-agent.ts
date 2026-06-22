@@ -36,6 +36,7 @@ export interface CreateMockPodOptions {
   scenario?: MockAgentScenario;
   prompt?: string;
   alias?: string;
+  ticketSlug?: string;
 }
 
 export interface MockAgentPod {
@@ -70,6 +71,7 @@ export async function createMockAgentPod(
     agentfileLayer: buildAgentfileLayer(opts),
   };
   if (opts.alias) input.alias = opts.alias;
+  if (opts.ticketSlug) input.ticketSlug = opts.ticketSlug;
 
   const resp = await cc.pod.createPod(input) as { pod?: Pod };
   const podKey = resp.pod?.podKey;

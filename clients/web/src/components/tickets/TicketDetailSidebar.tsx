@@ -69,7 +69,7 @@ export function TicketDetailSidebar({
         </p>
       </div>
 
-      <RailSection title={t("tickets.rail.workingPods")} count={activePods.length}>
+      <RailSection title={t("tickets.rail.workingPods")} count={activePods.length} data-testid="working-pods-rail">
         {podsLoading ? (
           <RailEmpty icon={<Terminal className="h-4 w-4" />} text={t("common.loading")} />
         ) : activePods.length === 0 ? (

@@ -5,11 +5,12 @@ interface RailSectionProps {
   count?: number;
   action?: React.ReactNode;
   children: React.ReactNode;
+  "data-testid"?: string;
 }
 
-export function RailSection({ title, count, action, children }: RailSectionProps) {
+export function RailSection({ title, count, action, children, "data-testid": testId }: RailSectionProps) {
   return (
-    <section className="rounded-md border border-border bg-card">
+    <section className="rounded-md border border-border bg-card" data-testid={testId}>
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {title}
