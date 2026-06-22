@@ -7,7 +7,6 @@ type Status = "idle" | "loading" | "done" | "error";
 interface CacheEntry {
   branches: string[];
   status: Status;
-  reqToken: number;
 }
 
 const cache = new Map<number, CacheEntry>();
@@ -17,7 +16,7 @@ const listeners = new Map<number, Set<() => void>>();
 function getEntry(id: number): CacheEntry {
   const existing = cache.get(id);
   if (existing) return existing;
-  const entry: CacheEntry = { branches: [], status: "idle", reqToken: 0 };
+  const entry: CacheEntry = { branches: [], status: "idle" };
   cache.set(id, entry);
   return entry;
 }
@@ -35,22 +34,24 @@ function subscribe(id: number | null, cb: () => void): () => void {
     const s = listeners.get(id);
     if (!s) return;
     s.delete(cb);
-    if (s.size === 0) listeners.delete(id);
+    if (s.size === 0) {
+      listeners.delete(id);
+      cache.delete(id);
+      inflight.delete(id);
+    }
   };
 }
 
 function doFetch(id: number): void {
   if (inflight.has(id)) return;
   const entry = getEntry(id);
-  const token = entry.reqToken + 1;
-  entry.reqToken = token;
   entry.status = "loading";
 
   const orgSlug = readCurrentOrg()?.slug ?? "";
   const p = listRepositoryBranches(orgSlug, id)
     .then((res) => {
       const current = cache.get(id);
-      if (!current || current.reqToken !== token) return;
+      if (!current) return;
       current.branches = res.items;
       current.status = "done";
       inflight.delete(id);
@@ -58,7 +59,7 @@ function doFetch(id: number): void {
     })
     .catch(() => {
       const current = cache.get(id);
-      if (!current || current.reqToken !== token) return;
+      if (!current) return;
       current.status = "error";
       inflight.delete(id);
       notify(id);
