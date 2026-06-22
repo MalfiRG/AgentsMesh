@@ -5,8 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/anthropics/agentsmesh/backend/internal/config"
+	"github.com/anthropics/agentsmesh/backend/internal/domain/user"
 	"github.com/anthropics/agentsmesh/backend/internal/infra"
 	"github.com/anthropics/agentsmesh/backend/internal/infra/git"
+	userSvc "github.com/anthropics/agentsmesh/backend/internal/service/user"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -69,6 +72,60 @@ func TestListBranchesForUser(t *testing.T) {
 		seedRepo(t, db, "ssh", "ssh://git@host", "owner/repo")
 		_, err := s.ListBranchesForUser(ctx, 1, 42, "tok")
 		require.ErrorIs(t, err, ErrNoGitCredential)
+	})
+
+	t.Run("construction error is sanitized (M1)", func(t *testing.T) {
+		s, db := setupTestService(t)
+		seedRepo(t, db, "github", "https://github.com", "owner/repo")
+		constructErr := errors.New("connection refused to https://github.com?token=SECRET-TOK")
+		s.SetProviderFactory(func(_, _, _ string) (git.Provider, error) {
+			return nil, constructErr
+		})
+		_, err := s.ListBranchesForUser(ctx, 1, 42, "SECRET-TOK")
+		require.ErrorIs(t, err, ErrListBranchesProvider)
+		require.NotContains(t, err.Error(), "SECRET-TOK")
+	})
+
+	t.Run("default credential preferred over arbitrary same-host one (X3)", func(t *testing.T) {
+		s, db := setupTestService(t)
+		seedRepo(t, db, "github", "https://github.com", "owner/repo")
+
+		nonDefaultTok := "token-non-default"
+		defaultTok := "token-default"
+		userID := int64(99)
+
+		db.Create(&user.RepositoryProvider{
+			UserID:            userID,
+			ProviderType:      "github",
+			Name:              "non-default",
+			BaseURL:           "https://github.com",
+			BotTokenEncrypted: &nonDefaultTok,
+			IsDefault:         false,
+			IsActive:          true,
+		})
+		db.Create(&user.RepositoryProvider{
+			UserID:            userID,
+			ProviderType:      "github",
+			Name:              "default",
+			BaseURL:           "https://github.com",
+			BotTokenEncrypted: &defaultTok,
+			IsDefault:         true,
+			IsActive:          true,
+		})
+
+		us := userSvc.NewService(infra.NewUserRepository(db))
+		ws := NewWebhookService(infra.NewGitProviderRepository(db), &config.Config{}, us, nil)
+		s.SetWebhookService(ws)
+
+		var factoryToken string
+		s.SetProviderFactory(func(_, _, token string) (git.Provider, error) {
+			factoryToken = token
+			return &fakeProvider{branches: []*git.Branch{{Name: "main", Default: true}}}, nil
+		})
+
+		_, err := s.ListBranchesForUser(ctx, 1, userID, "")
+		require.NoError(t, err)
+		require.Equal(t, defaultTok, factoryToken)
 	})
 }
 

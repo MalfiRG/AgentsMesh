@@ -158,7 +158,7 @@ func (s *WebhookService) getGitProviderForUser(ctx context.Context, repo *gitpro
 
 	accessToken, err := s.ResolveAccessToken(ctx, repo, userID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: token resolution failed", ErrNoAccessToken)
+		return nil, fmt.Errorf("%w: %v", ErrNoAccessToken, err)
 	}
 
 	provider, err := git.NewProvider(repo.ProviderType, repo.ProviderBaseURL, accessToken)

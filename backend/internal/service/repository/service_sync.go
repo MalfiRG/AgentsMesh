@@ -89,14 +89,14 @@ func (s *Service) ListBranchesForUser(ctx context.Context, repoID, userID int64,
 		if errors.Is(err, git.ErrProviderNotSupported) {
 			return nil, ErrNoGitCredential
 		}
-		return nil, err
+		slog.ErrorContext(ctx, "provider construction failed", "repoID", repoID, "err", err)
+		return nil, ErrListBranchesProvider
 	}
 
 	branches, err := client.ListBranches(ctx, repo.ExternalID)
 	if err != nil {
-		// X4: provider transport errors (e.g. Gitee puts access_token in URL query) can
-		// embed the token in the error string. Log raw error server-side; return a fixed
-		// sentinel that carries no URL or query parameters to the caller.
+		// X4: Gitee embeds access_token in URL query; transport errors carry it verbatim.
+		// Log raw error server-side only; return a fixed sentinel with no URL/query.
 		slog.ErrorContext(ctx, "list branches from provider failed", "repoID", repoID, "err", err)
 		return nil, ErrListBranchesProvider
 	}
