@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { RunnerSelect } from "./RunnerSelect";
 import { CredentialBundleSelect } from "./CredentialBundleSelect";
 import { EnvBundleMultiSelect } from "./EnvBundleMultiSelect";
-import { RepositorySelect, BranchInput } from "./RepositorySelect";
+import { RepositorySelect } from "./RepositorySelect";
+import { BranchCombobox } from "./BranchCombobox";
 import { AdvancedOptions } from "./AdvancedOptions";
 import { AgentfileLayerEditor } from "./AgentfileLayerEditor";
 import type { CreatePodFormState } from "../hooks";
@@ -117,9 +118,9 @@ export function AdvancedFormSection({
             t={t}
           />
 
-          {/* Branch Input */}
           {form.selectedRepository && (
-            <BranchInput
+            <BranchCombobox
+              repoId={form.selectedRepository}
               value={form.selectedBranch}
               onChange={form.setSelectedBranch}
               error={form.validationErrors.branch}
