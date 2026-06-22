@@ -41,6 +41,7 @@ go_test(
         "//runner/internal/agents/loopal",
         "//runner/internal/agents/opencode",
         "//runner/internal/agents/opencode/testsupport",
+        "//runner/internal/agents/pi/testsupport",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
