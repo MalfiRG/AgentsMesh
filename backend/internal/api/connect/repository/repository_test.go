@@ -26,7 +26,8 @@ func (f fakeOrg) GetSlug() string { return f.slug }
 func (f fakeOrg) GetName() string { return f.slug }
 
 type fakeOrgService struct {
-	role string
+	role     string
+	noMember bool
 }
 
 func (f *fakeOrgService) GetBySlug(_ context.Context, slug string) (middleware.OrganizationGetter, error) {
@@ -35,8 +36,13 @@ func (f *fakeOrgService) GetBySlug(_ context.Context, slug string) (middleware.O
 	}
 	return fakeOrg{id: 7, slug: slug}, nil
 }
-func (f *fakeOrgService) IsMember(context.Context, int64, int64) (bool, error) { return true, nil }
-func (f *fakeOrgService) GetMemberRole(context.Context, int64, int64) (string, error) {
+func (f *fakeOrgService) IsMember(_ context.Context, _, _ int64) (bool, error) {
+	return !f.noMember, nil
+}
+func (f *fakeOrgService) GetMemberRole(_ context.Context, _, _ int64) (string, error) {
+	if f.noMember {
+		return "", errors.New("not a member")
+	}
 	return f.role, nil
 }
 
@@ -44,9 +50,12 @@ func (f *fakeOrgService) GetMemberRole(context.Context, int64, int64) (string, e
 // methods used by ResolveOrgScope-followed paths need real behavior.
 type fakeRepoService struct {
 	repositoryservice.RepositoryServiceInterface
-	repos    []*gitprovider.Repository
-	getByID  func(context.Context, int64) (*gitprovider.Repository, error)
-	getBySlg func(context.Context, int64, string, string, string) (*gitprovider.Repository, error)
+	repos      []*gitprovider.Repository
+	getByID    func(context.Context, int64) (*gitprovider.Repository, error)
+	getBySlg   func(context.Context, int64, string, string, string) (*gitprovider.Repository, error)
+	branches   []string
+	err        error
+	lastUserID int64
 }
 
 func (f *fakeRepoService) ListByOrganizationForUser(
@@ -71,10 +80,38 @@ func (f *fakeRepoService) GetBySlug(
 	return nil, repositoryservice.ErrRepositoryNotFound
 }
 
+func (f *fakeRepoService) ListBranchesForUser(
+	_ context.Context, _ int64, userID int64, _ string,
+) ([]string, error) {
+	f.lastUserID = userID
+	return f.branches, f.err
+}
+
 // ctxAsUser populates the auth-interceptor stand-in: UserID matters because
 // ResolveOrgScope rejects empty TenantContext as Unauthenticated.
 func ctxAsUser(userID int64) context.Context {
 	return middleware.SetTenant(context.Background(), &middleware.TenantContext{UserID: userID})
+}
+
+func fakeOrgSvc() *fakeOrgService { return &fakeOrgService{role: "admin"} }
+
+// namesOf extracts branch names from proto Branch items.
+func namesOf(items []*repositoryv1.Branch) []string {
+	out := make([]string, 0, len(items))
+	for _, b := range items {
+		out = append(out, b.GetName())
+	}
+	return out
+}
+
+// orgRepo returns a repo whose OrganizationID matches the org injected by
+// fakeOrgService (id=7) so that requireRepoRead's AllowRead check passes.
+func orgRepo() *gitprovider.Repository {
+	return &gitprovider.Repository{
+		ID:             1,
+		OrganizationID: 7,
+		Visibility:     "organization",
+	}
 }
 
 // connectCodeOf is the canonical accessor for the Connect error code,
@@ -332,6 +369,84 @@ func TestToProtoMergeRequest_AllFields(t *testing.T) {
 	assert.Equal(t, "https://gitlab/pipelines/10", got.GetPipelineUrl())
 	assert.Equal(t, int64(99), got.GetTicketId())
 	assert.Equal(t, int64(123), got.GetPodId())
+}
+
+// --- mapServiceError: ErrNoGitCredential -> FailedPrecondition ---
+
+func TestMapServiceError_NoGitCredential_FailedPrecondition(t *testing.T) {
+	got := connectCodeOf(t, mapServiceError(repositoryservice.ErrNoGitCredential))
+	assert.Equal(t, connect.CodeFailedPrecondition, got)
+}
+
+// --- ListRepositoryBranches guard tests ---
+
+func TestListRepositoryBranches_MissingOrgSlug_InvalidArgument(t *testing.T) {
+	svc := &fakeRepoService{branches: []string{"main"}}
+	srv := NewServer(svc, fakeOrgSvc())
+	_, err := srv.ListRepositoryBranches(ctxAsUser(42), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{}))
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeInvalidArgument, connectCodeOf(t, err))
+}
+
+func TestListRepositoryBranches_NoAuth_Unauthenticated(t *testing.T) {
+	svc := &fakeRepoService{branches: []string{"main"}}
+	srv := NewServer(svc, fakeOrgSvc())
+	_, err := srv.ListRepositoryBranches(context.Background(), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{OrgSlug: "acme"}))
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeUnauthenticated, connectCodeOf(t, err))
+}
+
+func TestListRepositoryBranches_NonMember_PermissionDenied(t *testing.T) {
+	noMemberOrg := &fakeOrgService{role: "admin"}
+	noMemberOrg.noMember = true
+	svc := &fakeRepoService{branches: []string{"main"}}
+	srv := NewServer(svc, noMemberOrg)
+	_, err := srv.ListRepositoryBranches(ctxAsUser(42), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{OrgSlug: "acme", Id: 1}))
+	require.Error(t, err)
+	assert.Equal(t, connect.CodePermissionDenied, connectCodeOf(t, err))
+}
+
+// --- ListRepositoryBranches: resolve-then-validate tests ---
+
+func TestListRepositoryBranches_EmptyToken_ResolvesServerSide(t *testing.T) {
+	svc := &fakeRepoService{
+		branches: []string{"main", "dev"},
+		getByID:  func(_ context.Context, _ int64) (*gitprovider.Repository, error) { return orgRepo(), nil },
+	}
+	srv := NewServer(svc, fakeOrgSvc())
+	resp, err := srv.ListRepositoryBranches(ctxAsUser(42), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{
+		OrgSlug: "acme", Id: 1, AccessToken: "",
+	}))
+	require.NoError(t, err)
+	require.Equal(t, []string{"main", "dev"}, namesOf(resp.Msg.Items))
+	require.Equal(t, int64(42), svc.lastUserID)
+}
+
+func TestListRepositoryBranches_NoCredential_FailedPrecondition(t *testing.T) {
+	svc := &fakeRepoService{
+		err:     repositoryservice.ErrNoGitCredential,
+		getByID: func(_ context.Context, _ int64) (*gitprovider.Repository, error) { return orgRepo(), nil },
+	}
+	srv := NewServer(svc, fakeOrgSvc())
+	_, err := srv.ListRepositoryBranches(ctxAsUser(42), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{OrgSlug: "acme", Id: 1}))
+	require.Equal(t, connect.CodeFailedPrecondition, connectCodeOf(t, err))
+}
+
+func TestListRepositoryBranches_ProviderError_SurfacesNoToken(t *testing.T) {
+	svc := &fakeRepoService{
+		err:     repositoryservice.ErrListBranchesProvider,
+		getByID: func(_ context.Context, _ int64) (*gitprovider.Repository, error) { return orgRepo(), nil },
+	}
+	srv := NewServer(svc, fakeOrgSvc())
+	const tok = "super-secret-token"
+	_, err := srv.ListRepositoryBranches(ctxAsUser(42), connect.NewRequest(&repositoryv1.ListRepositoryBranchesRequest{
+		OrgSlug: "acme", Id: 1, AccessToken: tok,
+	}))
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, tok)
+	assert.NotContains(t, msg, "access_token")
+	assert.NotContains(t, msg, "https://")
 }
 
 func mustParseTime(t *testing.T, s string) time.Time {

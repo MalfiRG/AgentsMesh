@@ -25,11 +25,8 @@ func (s *Server) ListRepositoryBranches(
 	if err := s.requireRepoRead(ctx, req.Msg.GetId()); err != nil {
 		return nil, err
 	}
-	if req.Msg.GetAccessToken() == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("access token required"))
-	}
-
-	branches, err := s.repoSvc.ListBranches(ctx, req.Msg.GetId(), req.Msg.GetAccessToken())
+	tenant := middleware.GetTenant(ctx)
+	branches, err := s.repoSvc.ListBranchesForUser(ctx, req.Msg.GetId(), tenant.UserID, req.Msg.GetAccessToken())
 	if err != nil {
 		return nil, mapServiceError(err)
 	}
@@ -56,11 +53,8 @@ func (s *Server) SyncRepositoryBranches(
 	if err := s.requireRepoRead(ctx, req.Msg.GetId()); err != nil {
 		return nil, err
 	}
-	if req.Msg.GetAccessToken() == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("access token required"))
-	}
-
-	branches, err := s.repoSvc.ListBranches(ctx, req.Msg.GetId(), req.Msg.GetAccessToken())
+	tenant := middleware.GetTenant(ctx)
+	branches, err := s.repoSvc.ListBranchesForUser(ctx, req.Msg.GetId(), tenant.UserID, req.Msg.GetAccessToken())
 	if err != nil {
 		return nil, mapServiceError(err)
 	}

@@ -25,7 +25,8 @@ func mapServiceError(err error) error {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	case errors.Is(err, repositoryservice.ErrRepositoryExists):
 		return connect.NewError(connect.CodeAlreadyExists, err)
-	case errors.Is(err, repositoryservice.ErrRepositoryHasLoopRefs):
+	case errors.Is(err, repositoryservice.ErrRepositoryHasLoopRefs),
+		errors.Is(err, repositoryservice.ErrNoGitCredential):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
