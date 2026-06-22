@@ -24,8 +24,13 @@ func setupPodEventCallbacks(db *gorm.DB, podCoordinator *runner.PodCoordinator, 
 			AgentStatus    string  `gorm:"column:agent_status"`
 			ErrorCode      *string `gorm:"column:error_code"`
 			ErrorMessage   *string `gorm:"column:error_message"`
+			TicketSlug     string  `gorm:"column:ticket_slug"`
 		}
-		if err := db.Table("pods").Where("pod_key = ?", podKey).First(&pod).Error; err != nil {
+		if err := db.Table("pods").
+			Select("pods.organization_id, pods.created_by_id, pods.status, pods.agent_status, pods.error_code, pods.error_message, COALESCE(tickets.slug, '') AS ticket_slug").
+			Joins("LEFT JOIN tickets ON tickets.id = pods.ticket_id").
+			Where("pods.pod_key = ?", podKey).
+			First(&pod).Error; err != nil {
 			slog.Error("failed to get pod for event", "pod_key", podKey, "error", err)
 			return
 		}
@@ -41,18 +46,30 @@ func setupPodEventCallbacks(db *gorm.DB, podCoordinator *runner.PodCoordinator, 
 			eventType = eventbus.EventPodStatusChanged
 		}
 
-		data := &eventsv1.PodStatusChangedEventData{
-			PodKey:      podKey,
-			Status:      status,
-			AgentStatus: agentStatus,
+		var event *eventbus.Event
+		var err error
+		if eventType == eventbus.EventPodCreated {
+			created := &eventsv1.PodCreatedEventData{
+				PodKey:      podKey,
+				Status:      status,
+				AgentStatus: agentStatus,
+				TicketSlug:  pod.TicketSlug,
+			}
+			event, err = eventbus.NewEntityEvent(eventType, pod.OrganizationID, "pod", podKey, created)
+		} else {
+			changed := &eventsv1.PodStatusChangedEventData{
+				PodKey:      podKey,
+				Status:      status,
+				AgentStatus: agentStatus,
+			}
+			if pod.ErrorCode != nil {
+				changed.ErrorCode = *pod.ErrorCode
+			}
+			if pod.ErrorMessage != nil {
+				changed.ErrorMessage = *pod.ErrorMessage
+			}
+			event, err = eventbus.NewEntityEvent(eventType, pod.OrganizationID, "pod", podKey, changed)
 		}
-		if pod.ErrorCode != nil {
-			data.ErrorCode = *pod.ErrorCode
-		}
-		if pod.ErrorMessage != nil {
-			data.ErrorMessage = *pod.ErrorMessage
-		}
-		event, err := eventbus.NewEntityEvent(eventType, pod.OrganizationID, "pod", podKey, data)
 		if err != nil {
 			slog.Error("failed to create pod event", "error", err)
 			return

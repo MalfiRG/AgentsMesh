@@ -60,7 +60,7 @@ func (s *Server) CreatePod(
 		return nil, mapServiceError(err)
 	}
 
-	s.publishPodCreated(ctx, result.Pod)
+	s.publishPodCreated(ctx, result.Pod, req.Msg.GetTicketSlug())
 
 	resp := &podv1.CreatePodResponse{Pod: ToProtoPod(result.Pod)}
 	if result.Warning != "" {
@@ -77,7 +77,7 @@ func (s *Server) CreatePod(
 // renderers a deterministic "pod exists" signal independent of runner
 // timing. Duplicates with the status-callback path are harmless — handlers
 // debounce sidebar refetch.
-func (s *Server) publishPodCreated(ctx context.Context, pod *podDomain.Pod) {
+func (s *Server) publishPodCreated(ctx context.Context, pod *podDomain.Pod, ticketSlug string) {
 	if s.eventBus == nil || pod == nil {
 		return
 	}
@@ -87,6 +87,7 @@ func (s *Server) publishPodCreated(ctx context.Context, pod *podDomain.Pod) {
 		AgentStatus: pod.AgentStatus,
 		RunnerId:    pod.RunnerID,
 		CreatedById: pod.CreatedByID,
+		TicketSlug:  ticketSlug,
 	}
 	if pod.TicketID != nil {
 		data.TicketId = pod.TicketID
