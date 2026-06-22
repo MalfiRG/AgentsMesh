@@ -48,7 +48,7 @@ export class CreatePodPage {
   }
 
   branchCombobox(): Locator {
-    return this.dialog.getByRole("combobox");
+    return this.dialog.getByLabel(/branch/i, { exact: false });
   }
 
   branchOption(name: string): Locator {

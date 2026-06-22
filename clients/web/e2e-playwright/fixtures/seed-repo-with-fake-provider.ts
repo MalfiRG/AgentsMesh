@@ -110,6 +110,8 @@ export async function seedRepoWithFakeProvider(
   if (!repoIdRow) throw new Error("seeded repo not found after insert");
   const repoId = Number(repoIdRow);
 
+  // bot_token_encrypted is intentionally plaintext: the fake provider ignores auth,
+  // mirroring how service_branches_integration_test.go seeds the column as a raw string.
   db.setup(`
     INSERT INTO user_repository_providers
       (user_id, provider_type, name, base_url, bot_token_encrypted, is_default, is_active)

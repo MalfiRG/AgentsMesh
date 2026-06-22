@@ -2,6 +2,7 @@ import { test as base } from "@playwright/test";
 import { DbFixture } from "./db.fixture";
 import { ApiFixture } from "./api.fixture";
 import { createConsoleMonitor, type ConsoleMonitor } from "../helpers/console-monitor";
+import { seedRepoWithFakeProvider, type SeedRepoOptions, type SeededRepo } from "./seed-repo-with-fake-provider";
 
 /**
  * Extended test fixtures with database and API helpers.
@@ -28,6 +29,7 @@ interface Fixtures {
   db: DbFixture;
   api: ApiFixture;
   monitor: ConsoleMonitor;
+  seedRepo: (opts?: SeedRepoOptions) => Promise<SeededRepo>;
 }
 
 export const test = base.extend<Fixtures>({
@@ -53,6 +55,18 @@ export const test = base.extend<Fixtures>({
     },
     { auto: true },
   ],
+
+  seedRepo: async ({ db }, use) => {
+    const seeded: SeededRepo[] = [];
+    await use(async (opts?: SeedRepoOptions) => {
+      const repo = await seedRepoWithFakeProvider(db, opts);
+      seeded.push(repo);
+      return repo;
+    });
+    for (const repo of seeded) {
+      repo.cleanup();
+    }
+  },
 });
 
 export { expect } from "@playwright/test";
