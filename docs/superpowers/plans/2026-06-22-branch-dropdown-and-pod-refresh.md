@@ -1,6 +1,6 @@
 # Branch Dropdown + Ticket-View Pod Refresh Implementation Plan
 
-**Status:** Rev 2 - post-adversarial-review (lite: 3 reviewers, 20 findings applied: 3 critical, 5 high, 4 medium, 3 low, 4 traceability, 1 wording)
+**Status:** Rev 3 - post-cross-model (Codex/GPT): 1 critical + 4 major applied
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
@@ -8,7 +8,7 @@
 
 **Goal:** Replace the free-text branch field in the Create Pod form with a lazily-fetched editable branch combobox, and make the ticket-view pod list refresh when a pod is created (same-tab and across windows).
 
-**Architecture:** Backend resolves the git access token server-side from the caller's default credential (the branch path is non-functional today because the token is empty and the handlers reject empty tokens). A new lazy React hook caches branches per repository with a stale-response guard. Feature 2 reuses the existing `invalidateTicketPods` cache primitive and the already-existing `PodCreatedEventData.ticket_slug` wire field.
+**Architecture:** Backend resolves the git access token server-side from the caller's git credential for the repo's host (the branch path is non-functional today because the token is empty and the handlers reject empty tokens). The reused resolution path does NOT order by `is_default` today, so with multiple credentials for the same host it picks an arbitrary one; Task 2 adds `is_default DESC` ordering so it prefers the user's default credential (X3). A new lazy React hook caches branches per repository with a stale-response guard. Feature 2 reuses the existing `invalidateTicketPods` cache primitive (after fixing it to delete-then-refetch - see Phase C Step 0; today it only `inflight.delete` + `notify`, which re-renders the SAME cached bytes) and the already-existing `PodCreatedEventData.ticket_slug` wire field.
 
 **Tech Stack:** Go (Gin + Connect-RPC + GORM + testify), git provider HTTP clients, Next.js + React + TypeScript + Vitest, Playwright (`e2e-playwright`).
 
@@ -153,6 +153,7 @@ git commit -m "test(git): lock ListBranches failure modes across github/gitlab/g
 - Consumes: `WebhookService` (already held on `Service` as `s.webhookService`, `service.go:18-21`); `git.NewProvider(providerType, baseURL, token) (git.Provider, error)` (`provider.go:193`); `userService.GetDecryptedProviderTokenByTypeAndURL(ctx, userID, providerType, baseURL) (string, error)` (`repository_provider_token.go:36`).
 - Produces:
   - `var ErrNoGitCredential = errors.New("no git credential available to list branches")`
+  - `var ErrListBranchesProvider = errors.New("failed to list branches from provider")` (X4 - token-safe sentinel; the raw provider error is logged server-side only, never surfaced)
   - `func (s *WebhookService) ResolveAccessToken(ctx context.Context, repo *gitprovider.Repository, userID int64) (string, error)`
   - `func (s *Service) ListBranchesForUser(ctx context.Context, repoID, userID int64, explicitToken string) ([]string, error)`
   - settable seam: `func (s *Service) SetProviderFactory(f func(providerType, baseURL, token string) (git.Provider, error))`
@@ -161,8 +162,9 @@ git commit -m "test(git): lock ListBranches failure modes across github/gitlab/g
 
 Named tests this step must produce: `TestListBranchesForUser` with subtests
 "explicit token bypasses resolution" (the `TestListBranches_ExplicitTokenWins`
-behavior), "empty token with no credential", "provider error propagates", and
-"unsupported provider degrades" (M4).
+behavior), "empty token with no credential", "provider error is sanitized and
+never leaks the token" (X4), "unsupported provider degrades" (M4), and "default
+credential preferred over arbitrary same-host one" (X3).
 
 `service_branches_test.go`:
 
@@ -191,14 +193,19 @@ func TestListBranchesForUser(t *testing.T) {
 		require.ErrorIs(t, err, repository.ErrNoGitCredential)
 	})
 
-	t.Run("provider error propagates", func(t *testing.T) {
+	t.Run("provider error is sanitized and never leaks the token (X4)", func(t *testing.T) {
 		s, db := setupTestService(t)
 		seedRepo(t, db, "github", "https://github.com", "owner/repo")
+		// Simulate the Gitee shape: the transport error embeds the token+URL.
+		leaky := errors.New("Get \"https://gitee.com/api/v5/repos/owner/repo/branches?access_token=SECRET-TOK\": dial tcp: timeout")
 		s.SetProviderFactory(func(_, _, _ string) (git.Provider, error) {
-			return &fakeProvider{err: errors.New("provider 5xx")}, nil
+			return &fakeProvider{err: leaky}, nil
 		})
-		_, err := s.ListBranchesForUser(ctx, 1, 42, "tok")
-		require.ErrorContains(t, err, "provider 5xx")
+		_, err := s.ListBranchesForUser(ctx, 1, 42, "SECRET-TOK")
+		require.ErrorIs(t, err, repository.ErrListBranchesProvider)
+		require.NotContains(t, err.Error(), "SECRET-TOK") // X4: token never surfaced
+		require.NotContains(t, err.Error(), "access_token")
+		require.NotContains(t, err.Error(), "gitee.com")  // no URL/query in surfaced error
 	})
 
 	t.Run("unsupported provider degrades to ErrNoGitCredential", func(t *testing.T) {
@@ -233,10 +240,11 @@ Expected: FAIL (`SetProviderFactory`, `ListBranchesForUser`, `ErrNoGitCredential
 
 - [ ] **Step 3: Implement the seam + resolution**
 
-In `service.go`: add the sentinel and fields.
+In `service.go`: add the sentinels and fields.
 
 ```go
 var ErrNoGitCredential = errors.New("no git credential available to list branches")
+var ErrListBranchesProvider = errors.New("failed to list branches from provider") // X4: token-safe; raw provider error logged server-side only
 
 type providerFactory func(providerType, baseURL, token string) (git.Provider, error)
 
@@ -267,6 +275,25 @@ func (s *WebhookService) ResolveAccessToken(ctx context.Context, repo *gitprovid
 }
 ```
 
+**X3 - prefer the default credential, not an arbitrary one.**
+`GetDecryptedProviderTokenByTypeAndURL` resolves via
+`user_repo_credentials.go:150` `First(&provider)` over active rows with NO
+`is_default` ordering (`webhook_registration.go:148` is the reused path; the
+default-selection logic at `user_repo_credentials.go:102` is a DIFFERENT path
+not used here). With multiple credentials for the same host this picks an
+arbitrary one. Add `Order("is_default DESC")` to that `First(&provider)` query
+(`user_repo_credentials.go:150`) so branch listing prefers the user's default
+credential. Re-pin the exact query line at execution time; the column is the
+existing `is_default` boolean on the provider-credential row. Add a subtest to
+`TestListBranchesForUser`: seed two same-host credentials (one
+`is_default=true`, one false, default listing a distinct branch set), assert the
+default credential's token is the one passed to the provider factory. If, at
+execution time, the ordering change proves out of scope (e.g. the column name or
+table differs from this pin), document it inline in Task 2 as a known limitation
+("branch listing uses an arbitrary same-host credential; default-preference
+ordering REQUIRES VERIFICATION: confirm `is_default` column on the
+provider-credential table") rather than silently claiming "default credential".
+
 In `service_sync.go`, add `ListBranchesForUser` and route `ListBranches`
 through the factory:
 
@@ -295,7 +322,14 @@ func (s *Service) ListBranchesForUser(ctx context.Context, repoID, userID int64,
 	}
 	branches, err := client.ListBranches(ctx, repo.ExternalID)
 	if err != nil {
-		return nil, err
+		// X4: provider transport errors can embed the access token. Gitee puts
+		// access_token in the URL query (gitee_client.go:36-40) and returns raw
+		// httpClient.Do errors (:54); unwrapped, that error string reaches the
+		// client (service_sync.go -> mapServiceError -> CodeInternal with the
+		// original message -> connect_call.rs:61). Log the raw error
+		// server-side, return a fixed sentinel that carries no URL/query.
+		log.Error(ctx, "list branches from provider failed", "repoID", repoID, "err", err)
+		return nil, ErrListBranchesProvider
 	}
 	names := make([]string, 0, len(branches))
 	for _, b := range branches {
@@ -341,7 +375,7 @@ to `ListBranchesForUser`:
 - Modify/Test: `backend/internal/api/connect/repository/repository_test.go`
 
 **Interfaces:**
-- Consumes: `repoSvc.ListBranchesForUser(ctx, id, userID, token)` (Task 2); `middleware.GetTenant(ctx).UserID` (`repository_branches.go:115`); `repository.ErrNoGitCredential`.
+- Consumes: `repoSvc.ListBranchesForUser(ctx, id, userID, token)` (Task 2); `middleware.GetTenant(ctx).UserID` (`repository_branches.go:115`); `repository.ErrNoGitCredential`; `repository.ErrListBranchesProvider` (X4 - already token-safe at the service layer).
 - Produces: empty-token Connect call now reaches the service; `ErrNoGitCredential -> connect.CodeFailedPrecondition` on the Connect side, and `apierr.Conflict` (HTTP 409) on the REST side (there is NO 412/`PreconditionFailed` helper in `backend/pkg/apierr/helpers.go`; `Conflict` is the closest existing helper). This REST(409)/Connect(FailedPrecondition) divergence is intentional and harmless: the frontend keys its free-text fallback off error-existence, not the specific code.
 
 - [ ] **Step 1: Write the failing handler test**
@@ -388,12 +422,25 @@ REST coverage (T3): add `TestREST_ListBranches_NoCredential_Returns409` in the
 REST handler test asserting empty-token + `ErrNoGitCredential` yields HTTP 409
 via `apierr.Conflict`.
 
+X4 surfaced-error coverage: add
+`TestListRepositoryBranches_ProviderError_SurfacesNoToken` - have the fake
+service return `repository.ErrListBranchesProvider`, and assert the Connect
+error message contains no `access_token`, no provider URL, and none of the token
+string. (The token-scrubbing itself is locked at the service layer in Task 2;
+this handler test confirms nothing re-introduces a leak downstream.)
+
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `bazel test //backend/internal/api/connect/repository:repository_test --test_filter=TestListRepositoryBranches_`
 Expected: FAIL (handler still rejects empty token at `repository_branches.go:28-30`).
 
 - [ ] **Step 3: Implement resolve-then-validate**
+
+PRESERVE the existing authz ordering: both branch handlers run the repo-read
+permission check BEFORE any token handling (`repository_branches.go:21`,
+`repositories_branches.go:22`). When removing the empty-token reject, do NOT
+move the token resolution above `requireRepoRead` - cleared by cross-model only
+on the condition that this ordering is kept.
 
 In `repository_branches.go`, remove the empty-token early return; replace the
 `s.repoSvc.ListBranches(...)` call with:
@@ -588,6 +635,26 @@ test("fetch error sets fallbackToFreeText", async () => {
   await waitFor(() => expect(result.current.fallbackToFreeText).toBe(true));
   expect(result.current.branches).toEqual([]);
 });
+
+test("same-repo overlap: late-resolving request A does not flip B's state (S4 / X5)", async () => {
+  // Two in-flight requests for the SAME repoId: A (via load) then B (via
+  // refresh). Resolve B first, then resolve A late. A's payload AND its cleanup
+  // (loading flip / notify) must NOT affect the committed B state.
+  const calls: Array<(v: unknown) => void> = [];
+  vi.mocked(listRepositoryBranches).mockImplementation(() =>
+    new Promise((r) => { calls.push(r); }) as never);
+  const { result } = renderHook(() => useRepositoryBranches(1));
+  act(() => result.current.load());          // request A
+  act(() => result.current.refresh());       // request B, same repoId
+  await act(async () => { calls[calls.length - 1]({ items: ["b-branch"], total: 1, limit: 100, offset: 0 }); }); // resolve B
+  await waitFor(() => expect(result.current.branches).toEqual(["b-branch"]));
+  await act(async () => { calls[0]({ items: ["a-branch"], total: 1, limit: 100, offset: 0 }); }); // resolve A late
+  expect(result.current.branches).toEqual(["b-branch"]); // A neither overwrote data nor double-committed
+  expect(result.current.loading).toBe(false);            // A's cleanup did not flip loading back on
+  // If refresh() reuses the in-flight promise (preferred impl), there is only
+  // ONE call; if it token-guards instead, there are two. Either is acceptable
+  // so long as the committed state above holds - so do NOT assert call count.
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -601,8 +668,24 @@ Model the inflight/listener cache on `useTicketPods.ts:17-118`. Key the cache by
 `repoId`; store `{ branches, status: "idle"|"loading"|"done"|"error", reqToken }`.
 `load()` no-ops if status is `loading`/`done`. On resolve, only commit if the
 entry's `reqToken` still matches the token captured at fetch start (S4). On
-reject, set `status="error"` (drives `fallbackToFreeText`). `refresh()` bumps the
-token and forces a fetch. Keep the file under 200 lines.
+reject, set `status="error"` (drives `fallbackToFreeText`). `refresh()` forces a
+fetch. Keep the file under 200 lines.
+
+**X5 - same-repo overlap.** The S4 token guard as originally specced only
+guards repo A->B switches and only the data COMMIT. If `refresh()` starts
+request B while request A for the SAME repoId is still in flight, A's cleanup
+(clearing loading/inflight + notify) can fire AFTER B started, even though A's
+payload is dropped - flipping `loading` or double-notifying. `useTicketPods`
+avoids this by never allowing overlapping fetches per key
+(`useTicketPods.ts:38-40` returns the existing inflight promise). Choose ONE:
+- **Preferred (matches useTicketPods):** `refresh()` reuses the in-flight
+  promise when one already exists for that repoId, instead of starting a second
+  fetch. No second request, no overlapping cleanup.
+- **Alternative:** token-guard the cleanup/notify (loading flip, inflight
+  clear) as well as the data commit, so a stale A's cleanup is a no-op once its
+  `reqToken` is superseded.
+Either must satisfy the same-repo overlap test above (late A leaves B committed,
+`loading` stays false).
 
 The stale-guard test (test 4) must not rely on microtask timing - resolve each
 deferred promise inside `await act(async () => ...)` so React flushes
@@ -757,6 +840,87 @@ git commit -m "feat(web): use BranchCombobox in create-pod advanced section"
 
 ## Phase C - Feature 2: ticket-view pod refresh
 
+### Task 8 Step 0 (shared prerequisite for Phase C): make `invalidateTicketPods` actually refetch (X1)
+
+**Applies to all of Phase C.** Do this BEFORE Task 8 and Task 10; both depend on it.
+
+`invalidateTicketPods` does NOT refetch today. `useTicketPods.ts:110-113` only
+`inflight.delete(slug)` + `notify(slug)`; the actual fetch fires ONLY in the
+mount / slug-change `useEffect` (`:90-95`), and render reads cached Rust bytes
+(`:97`). So bare invalidation re-renders the SAME stale data. The working
+same-tab path proves it: `SidebarPodSection.tsx:34-37` calls
+`invalidateTicketPods(ticketSlug); void refresh();` (BOTH). As planned, Task 8
+(`onPodCreated={() => invalidateTicketPods(ticketSlug)}`) and Task 10 (global
+realtime handler calling bare `invalidateTicketPods(data.ticketSlug)`, which has
+no `refresh()` handle) would pass their tests while leaving stale pods on screen.
+
+Fix: change `invalidateTicketPods` to delete-then-refetch, so EVERY caller
+(including the global realtime handler) gets a real refresh.
+
+**Files:**
+- Modify: `clients/web/src/hooks/useTicketPods.ts:110-113` (`invalidateTicketPods`)
+- Modify/Test: `clients/web/src/hooks/__tests__/useTicketPods.test.ts` (or create if absent; model on the existing useTicketPods test)
+
+**Interfaces:**
+- Consumes: the inflight map + `fetchTicketPods(slug)` (`useTicketPods.ts:38-40`, dedupes via the inflight map and notifies on resolve); the listener registry that tracks which slugs have active subscribers.
+- Produces: new `invalidateTicketPods(slug)` behavior: `inflight.delete(slug)`; if `slug` has active listeners, kick off `fetchTicketPods(slug)`.
+
+- [ ] **Step 0.1: Write the failing test**
+
+Spy on the ticket service fetch (`get_ticket_pods`) and assert that
+`invalidateTicketPods(slug)` triggers it, not merely a notify:
+
+```ts
+test("invalidateTicketPods refetches for a slug with active listeners", async () => {
+  // render a useTicketPods(slug) consumer so the slug has an active listener
+  const { result } = renderHook(() => useTicketPods("AM-1"));
+  await waitFor(() => expect(result.current.ready).toBe(true));
+  vi.mocked(getTicketPods).mockClear(); // get_ticket_pods service spy
+  act(() => invalidateTicketPods("AM-1"));
+  await waitFor(() => expect(getTicketPods).toHaveBeenCalledWith("AM-1", expect.anything()));
+});
+
+test("invalidateTicketPods with no active listeners does not fetch", () => {
+  vi.mocked(getTicketPods).mockClear();
+  act(() => invalidateTicketPods("AM-unwatched"));
+  expect(getTicketPods).not.toHaveBeenCalled();
+});
+```
+
+Re-pin `get_ticket_pods` / `getTicketPods` to the real service symbol the hook
+calls (`useTicketPods.ts` fetch path) at execution time.
+
+- [ ] **Step 0.2: Run to verify it fails**
+
+Run: `bazel test //clients/web:unit --test_filter=useTicketPods`
+Expected: FAIL (bare invalidate does not fetch).
+
+- [ ] **Step 0.3: Implement delete-then-refetch**
+
+In `invalidateTicketPods` (`useTicketPods.ts:110-113`): keep
+`inflight.delete(slug)`; then, if `slug` has active listeners, call
+`fetchTicketPods(slug)` (which dedupes via the inflight map and notifies
+subscribers on resolve). Do NOT fetch for slugs with zero listeners (avoid
+waking dead subscriptions). Keep the file under 200 lines.
+
+`SidebarPodSection.tsx`'s existing `void refresh()` after invalidate becomes
+redundant-but-harmless (`fetchTicketPods` dedupes via the inflight map). Do NOT
+remove it - out of scope for this plan; noted only.
+
+- [ ] **Step 0.4: Run to verify pass**
+
+Run: `bazel test //clients/web:unit --test_filter=useTicketPods`
+Expected: PASS.
+
+- [ ] **Step 0.5: Commit**
+
+```bash
+git add clients/web/src/hooks/useTicketPods.ts clients/web/src/hooks/__tests__/useTicketPods.test.ts
+git commit -m "fix(web): invalidateTicketPods deletes-then-refetches so realtime+same-tab refresh actually reload (X1)"
+```
+
+---
+
 ### Task 8: Same-tab refresh on spawn (`TicketDetailSidebar`)
 
 **Files:**
@@ -764,16 +928,22 @@ git commit -m "feat(web): use BranchCombobox in create-pod advanced section"
 - Create/Test: `clients/web/src/components/tickets/__tests__/TicketDetailSidebar.podRefresh.test.tsx`
 
 **Interfaces:**
-- Consumes: `SpawnPodButton` already forwards `onPodCreated` from its modal `onCreated` (`SpawnPodButton.tsx:46-49`); `invalidateTicketPods(ticketSlug)` (`useTicketPods.ts:110`).
+- Consumes: `SpawnPodButton` already forwards `onPodCreated` from its modal `onCreated` (`SpawnPodButton.tsx:46-49`); `invalidateTicketPods(ticketSlug)` (`useTicketPods.ts:110`, now delete-then-refetch per Task 8 Step 0).
+
+> Depends on Task 8 Step 0 (X1): `invalidateTicketPods` must already refetch.
+> The same-tab call site stays `onPodCreated={() => invalidateTicketPods(ticketSlug)}`
+> (now sufficient, and consistent with the realtime path in Task 10). The test
+> asserts a real refetch fires (spy on the ticket service `get_ticket_pods`),
+> not merely that the `invalidateTicketPods` spy was called.
 
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-const invalidate = vi.fn();
-vi.mock("@/hooks/useTicketPods", () => ({
-  useTicketPods: () => ({ pods: [], loading: false, ready: true, error: null, refresh: vi.fn() }),
-  invalidateTicketPods: (slug: string) => invalidate(slug),
-}));
+// Spy the ticket service fetch the hook calls, so the assertion proves a real
+// refetch (X1), not just that invalidateTicketPods ran. Use the REAL
+// invalidateTicketPods (not a vi.fn stub) so its delete-then-refetch runs.
+vi.mock("@/lib/.../ticketPodsService", () => ({ getTicketPods: vi.fn() })); // re-pin to the real fetch symbol useTicketPods calls
+import { getTicketPods } from "@/lib/.../ticketPodsService";
 // Stub SpawnPodButton to expose its onPodCreated synchronously
 vi.mock("@/components/tickets/SpawnPodButton", () => ({
   SpawnPodButton: ({ onPodCreated }: { onPodCreated?: () => void }) => (
@@ -781,15 +951,20 @@ vi.mock("@/components/tickets/SpawnPodButton", () => ({
   ),
 }));
 
-test("spawning a pod invalidates this ticket's pods", () => {
-  render(<TicketDetailSidebar {...baseProps} ticketSlug="AM-1" />);
+test("spawning a pod refetches this ticket's pods", async () => {
+  vi.mocked(getTicketPods).mockResolvedValue([] as never);
+  render(<TicketDetailSidebar {...baseProps} ticketSlug="AM-1" />); // sidebar mounts a useTicketPods("AM-1") listener
+  await waitFor(() => expect(getTicketPods).toHaveBeenCalledWith("AM-1", expect.anything()));
+  vi.mocked(getTicketPods).mockClear();
   fireEvent.click(screen.getByText("spawn"));
-  expect(invalidate).toHaveBeenCalledWith("AM-1");
+  await waitFor(() => expect(getTicketPods).toHaveBeenCalledWith("AM-1", expect.anything())); // refetch, not just notify
 });
 ```
 
 `baseProps` provides the minimal `ticket`, `t`, etc. the sidebar needs (model on
 any existing `TicketDetailSidebar` test or construct a minimal `Ticket`).
+Re-pin the `getTicketPods` / `get_ticket_pods` import path to the real fetch
+symbol at execution time.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -944,7 +1119,14 @@ git commit -m "feat(pod): carry ticket_slug on pod:created from all three emitte
 - Create/Test: `clients/web/src/providers/__tests__/realtimePodHandlers.test.ts`
 
 **Interfaces:**
-- Consumes: `decodeEventData(PodCreatedEventDataSchema, event.data)` (schema already imported via `@/lib/realtime`, `types.ts:109`); `invalidateTicketPods(slug)` (`useTicketPods.ts:110`).
+- Consumes: `decodeEventData(PodCreatedEventDataSchema, event.data)` (schema already imported via `@/lib/realtime`, `types.ts:109`); `invalidateTicketPods(slug)` (`useTicketPods.ts:110`, now delete-then-refetch per Task 8 Step 0).
+
+> Depends on Task 8 Step 0 (X1): the call site stays the bare
+> `invalidateTicketPods(data.ticketSlug)` (the global realtime handler has no
+> `refresh()` handle), and that call NOW actually refetches. The unit test below
+> mocks `invalidateTicketPods` to a spy and asserts it fires with the right slug;
+> the real refetch behavior is locked by Task 8 Step 0's own test. The
+> end-to-end "second tab actually reloads" path is covered by Task 12.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -965,16 +1147,33 @@ test("pod:created without ticketSlug does not invalidate", () => {
 
 test("pod:status_changed keeps existing behavior and is not decoded as PodCreatedEventData", () => {
   handlePodEvent(makePodStatusChangedEvent({ podKey: "p1" }));
-  expect(refreshSidebar).toHaveBeenCalled();      // existing sidebar refresh unchanged
-  expect(refreshMeshTopology).toHaveBeenCalled(); // existing mesh refresh unchanged
+  // Lock the ACTUAL current status_changed behavior, NOT an assumed
+  // refreshSidebar(). The real handler does NOT call refreshSidebar() for
+  // pod:status_changed - that call lives only in the pod:created/pod:restarting
+  // branch. The status_changed branch fetches the pod / bumps the pod+mesh
+  // stores. READ realtimePodHandlers.ts at execution time and assert whatever
+  // the status_changed branch actually does (its existing fetch/bump path).
   expect(invalidate).not.toHaveBeenCalled();      // status_changed never invalidates ticket pods
+  // expect(refreshSidebar).not.toHaveBeenCalled(); // confirm against the real handler before locking either way
 });
 ```
 
 `makePodCreatedEvent` builds a `RealtimeEvent` of type `pod:created` whose
-`data` is a binary-encoded `PodCreatedEventData` (use `toBinary` +
-`PodCreatedEventDataSchema`, mirroring how `realtimeEventHandlers.test.ts`
-constructs event data).
+`data` is a **protojson PLAIN OBJECT** with snake_case keys (the wire is
+protojson, not binary - `decodeEventData` uses
+`fromJson(schema, data, {ignoreUnknownFields:true})`, `types.ts:74-79`; the
+server marshals with `UseProtoNames=true`,
+`backend/internal/infra/eventbus/marshal_data.go:10-12`). Do NOT use
+`toBinary(PodCreatedEventDataSchema, ...)`:
+
+```ts
+function makePodCreatedEvent({ podKey, ticketSlug }: { podKey: string; ticketSlug: string }) {
+  return { type: "pod:created", data: { pod_key: podKey, ticket_slug: ticketSlug } } as RealtimeEvent;
+}
+```
+
+Re-pin the exact snake_case field names against `PodCreatedEventData` /
+`event_data.proto:21-29` at execution time.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1001,13 +1200,18 @@ case "pod:restarting": {
 ```
 
 Add the `PodCreatedEventDataSchema` + `invalidateTicketPods` imports. Decode
-safety is a tolerant degradation, NOT a hard guarantee: `decodeEventData` uses
-`fromJson(..., {ignoreUnknownFields:true})` (`types.ts:74-79`), so even if a
-stale emitter ships a `PodStatusChangedEventData` payload under `pod:created`,
-it decodes to `ticketSlug=""` and the handler silently skips invalidation
-(degrades to no-refresh, never crashes). Task 9 makes the populated-slug case
-the norm; this handler never throws on the mismatched-payload case. The
-`pod:restarting` branch is NOT decoded.
+safety is a tolerant degradation, NOT a hard guarantee. The wire is
+**protojson**, decoded **by field name**: `decodeEventData` uses
+`fromJson(schema, data, {ignoreUnknownFields:true})` (`types.ts:74-79`) over the
+server's `UseProtoNames=true` JSON (`marshal_data.go:10-12`). So if a stale
+emitter ships a `PodStatusChangedEventData` payload under `pod:created`, that
+JSON simply lacks the `ticket_slug` key; the missing key decodes to
+`ticketSlug=""` and the handler silently skips invalidation (degrades to
+no-refresh, never crashes). There is NO binary field-number reuse and NO
+garbage-ticket-invalidation risk - JSON matches by name, and an absent name
+yields the zero value. Task 9 makes the populated-slug case the norm; this
+handler never throws on the mismatched-payload case. The `pod:restarting` branch
+is NOT decoded.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -1146,7 +1350,8 @@ git commit -m "test(e2e): ticket-view pod refresh same-tab and realtime"
 - Spec Feature 1 frontend (lazy hook S4, combobox, fallback) -> Tasks 5, 6, 7.
 - Spec Feature 2 same-tab -> Task 8. S3 realtime -> Tasks 9, 10.
 - E2E -> Tasks 11, 12.
-- Concurrency 6a (per-tab dedupe) -> Task 5 test 3; 6b (stale guard) -> Task 5 test 4; multitab 6a-across-tabs -> Task 12 second spec.
+- Concurrency 6a (per-tab dedupe) -> Task 5 test 3; 6b (stale guard, repo A->B) -> Task 5 test 4; 6b' (same-repo overlap, X5) -> Task 5 same-repo overlap test; multitab 6a-across-tabs -> Task 12 second spec.
+- Same-tab + realtime refresh actually reload (X1) -> Task 8 Step 0 (`invalidateTicketPods` delete-then-refetch) consumed by Tasks 8 and 10.
 - Scenarios: no-credential -> Tasks 2/3/5; provider-error -> Tasks 1/2/5; success variants -> Tasks 1/11; logout-mid-fetch -> Task 5 error path (auth rejection is the same error->fallback branch); repo-added-while-open -> documented known behavior, NO unit test. The per-repoId cache holds no live repo subscription for this panel, so a repo added while the dropdown is open does not auto-appear; the user re-opens the form. This is deliberate (conservative) and intentionally untested at the unit level.
 
 **Supersedes test plan:** S3 needs NO new proto field - `PodCreatedEventData.ticket_slug` already exists (`event_data.proto:21-29`); the schema is already available frontend-side, but the `pod:created` handler does NOT decode it today (Task 10 adds that). The realtime work is populating the slug from all three emitters (Task 9) and decoding it in the handler (Task 10), not a wire-format addition.
@@ -1189,3 +1394,84 @@ option was taken and recorded here.
 - **T4** - Named the previously implicit tests: `TestListBranchesForUser` subtests (incl. the explicit-token-wins case), the three Connect guard tests (`_MissingOrgSlug_InvalidArgument` / `_NoAuth_Unauthenticated` / `_NonMember_PermissionDenied`), and the `seedRepoWithFakeProvider` fixture as an explicit Task 11 Step 1.
 
 No finding was deferred.
+
+---
+
+## Resolutions Applied in Rev 3 (cross-model)
+
+A different model family (Codex/GPT) reviewed Rev 2 after the 3-reviewer Claude
+panel and found 1 critical + 4 major, each verified against the real tree. All
+five applied; nothing deferred.
+
+**Critical**
+- **X1** - `invalidateTicketPods` did NOT refetch: `useTicketPods.ts:110-113`
+  only `inflight.delete(slug)` + `notify(slug)`; the fetch fires only in the
+  mount/slug-change `useEffect` (`:90-95`) and render reads cached Rust bytes
+  (`:97`), so bare invalidation re-renders the SAME stale data (the working path
+  `SidebarPodSection.tsx:34-37` calls BOTH invalidate + `refresh()`). Both the
+  same-tab path (Task 8) and the global realtime handler (Task 10, no `refresh()`
+  handle) would have passed their tests while leaving stale pods on screen.
+  Added **Task 8 Step 0** as a shared Phase C prerequisite: `invalidateTicketPods`
+  now delete-then-refetches (`inflight.delete`; if the slug has active listeners,
+  call `fetchTicketPods(slug)`, which dedupes via the inflight map and notifies
+  on resolve), with its own failing test spying on the `get_ticket_pods` service
+  fetch. Task 8's test now asserts a real refetch (service spy), not just that
+  the `invalidateTicketPods` spy ran. Task 10's call site is unchanged and now
+  actually refetches; the end-to-end reload is locked by Task 12.
+  `SidebarPodSection`'s redundant-but-harmless `void refresh()` is left in place
+  (out of scope, noted only).
+
+**Major**
+- **X2** - Task 10 wire format corrected. The wire is **protojson**
+  (`decodeEventData` uses `fromJson(schema, data, {ignoreUnknownFields:true})`,
+  `types.ts:74-79`; server marshals `UseProtoNames=true`,
+  `marshal_data.go:10-12`), NOT binary. `makePodCreatedEvent` now builds
+  `event.data` as a protojson plain object with snake_case keys
+  (`{ pod_key, ticket_slug }`), not `toBinary(...)`. The `pod:status_changed`
+  regression-lock (T1) was reworded to assert the ACTUAL current handler
+  behavior (status_changed does NOT call `refreshSidebar()`; that lives only in
+  the `pod:created`/`pod:restarting` branch) - the executor reads the handler
+  and locks whatever it really does. The Rev 2 tolerant-decode rationale (C3 /
+  F-ADV-01) was corrected: decoding is JSON by field name, so a wrong-schema
+  payload simply lacks the `ticket_slug` key and yields `ticketSlug=""` - no
+  binary field-number reuse, no garbage-ticket-invalidation risk. The
+  "degrades to no-invalidation" conclusion stands; the reason is now "JSON
+  decoded by field name; missing key -> empty string."
+- **X3** - "default credential" was actually arbitrary. The reused path
+  `webhook_registration.go:148` -> `GetDecryptedProviderTokenByTypeAndURL` does
+  `First(&provider)` over active rows with NO `is_default` ordering
+  (`user_repo_credentials.go:150`); the default-selection logic at `:102` is a
+  different path not used here. Task 2 now adds `Order("is_default DESC")` to
+  that query so branch listing prefers the user's default credential, with a
+  subtest asserting the default credential's token reaches the provider factory.
+  The Architecture summary's "default credential" claim was corrected; if the
+  pin proves off at execution time, the plan documents it as a known limitation
+  (REQUIRES VERIFICATION) rather than claiming "default" silently.
+- **X4** - provider errors could leak the access token. Gitee puts
+  `access_token` in the URL query (`gitee_client.go:36-40`) and returns raw
+  `httpClient.Do` errors (`:54`); `service_sync.go:57` passes them unchanged,
+  `repository_mount.go:20` maps to `CodeInternal` with the original message, and
+  `connect_call.rs:61` surfaces it to the client. `ListBranchesForUser` now
+  wraps the `client.ListBranches(...)` error: log the raw error server-side,
+  return the token-safe sentinel `ErrListBranchesProvider`. Tests assert the
+  surfaced error contains no token string, no `access_token`, and no provider
+  URL - at the service layer (Task 2) and re-confirmed at the Connect handler
+  (Task 3).
+- **X5** - stale guard incomplete for same-repo overlap. Rev 2 only tested repo
+  A->B and only token-guarded the data COMMIT; a `refresh()`-started request B
+  overlapping an in-flight A for the SAME repoId let A's cleanup (loading flip /
+  notify) fire late. `useTicketPods` avoids this by reusing the in-flight
+  promise per key (`useTicketPods.ts:38-40`). Task 5 now requires either
+  reusing the in-flight promise on `refresh()` (preferred) or token-guarding the
+  cleanup/notify as well as the commit, plus an explicit same-repo overlap test
+  (A in flight, `refresh()` -> B, resolve A late, assert no stale loading flip /
+  no double-commit).
+
+**Cleared by cross-model (no work added)**
+- Authz ordering is correct: both branch handlers run the repo-read permission
+  check BEFORE token handling (`repository_branches.go:21`,
+  `repositories_branches.go:22`). Task 3 now carries a one-line note to PRESERVE
+  this ordering when removing the empty-token reject.
+- No field-number-reuse bug - decoding is JSON by field name (see X2).
+- No hard partial-deploy wire break for S3: `ticket_slug` is JSON-additive, so
+  backend-first or frontend-first rollout are both safe.
