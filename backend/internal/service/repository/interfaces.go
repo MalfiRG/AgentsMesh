@@ -17,6 +17,7 @@ type RepositoryServiceInterface interface {
 	ListByOrganizationForUser(ctx context.Context, orgID int64, userID int64) ([]*gitprovider.Repository, error)
 	GetWebhookService() WebhookServiceInterface
 	ListBranches(ctx context.Context, repoID int64, accessToken string) ([]string, error)
+	ListBranchesForUser(ctx context.Context, repoID, userID int64, explicitToken string) ([]string, error)
 	SyncFromProvider(ctx context.Context, repoID int64, accessToken string) (*gitprovider.Repository, error)
 	GetBySlug(ctx context.Context, orgID int64, providerType, providerBaseURL, slug string) (*gitprovider.Repository, error)
 	ListMergeRequests(ctx context.Context, repoID int64, branch, state string) ([]*MergeRequestInfo, error)

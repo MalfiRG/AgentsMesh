@@ -152,6 +152,7 @@ func (r *userRepo) GetRepositoryProviderByTypeAndURL(ctx context.Context, userID
 	err := r.db.WithContext(ctx).
 		Preload("Identity").
 		Where("user_id = ? AND provider_type = ? AND base_url = ? AND is_active = ?", userID, providerType, baseURL, true).
+		Order("is_default DESC").
 		First(&provider).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
