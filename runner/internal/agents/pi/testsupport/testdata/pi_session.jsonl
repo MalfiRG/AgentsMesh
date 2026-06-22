@@ -1,0 +1,5 @@
+{"type":"session","id":"019ee1a7","timestamp":"2026-06-19T20:52:21.863Z"}
+{"type":"model_change","provider":"openai-codex","modelId":"gpt-5.5"}
+{"type":"message","message":{"role":"user","model":"","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}}
+{"type":"message","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":17341,"output":177,"cacheRead":25600,"cacheWrite":0}}}
+{"type":"message","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":2048,"output":512,"cacheRead":0,"cacheWrite":1024}}}
