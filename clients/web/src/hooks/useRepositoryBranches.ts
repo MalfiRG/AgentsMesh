@@ -78,7 +78,10 @@ export interface UseRepositoryBranchesResult {
 export function useRepositoryBranches(repoId: number | null): UseRepositoryBranchesResult {
   const [, force] = useReducer((n: number) => n + 1, 0);
   const repoIdRef = useRef(repoId);
-  repoIdRef.current = repoId;
+
+  useEffect(() => {
+    repoIdRef.current = repoId;
+  }, [repoId]);
 
   useEffect(() => {
     if (repoId === null) return;
