@@ -1,6 +1,10 @@
 # Branch Dropdown + Ticket-View Pod Refresh Implementation Plan
 
+**Status:** Rev 2 - post-adversarial-review (lite: 3 reviewers, 20 findings applied: 3 critical, 5 high, 4 medium, 3 low, 4 traceability, 1 wording)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Citations are advisory.** Line numbers in this plan drift by approximately one line against the live tree. Re-grep and re-pin every cited `file:line` at execution time; trust the symbol name, not the number.
 
 **Goal:** Replace the free-text branch field in the Create Pod form with a lazily-fetched editable branch combobox, and make the ticket-view pod list refresh when a pod is created (same-tab and across windows).
 
@@ -14,7 +18,7 @@
 - No comments that restate what code does; only business-constraint / cross-module-contract / non-obvious-workaround comments.
 - File names must be specific (no `utils`/`helpers`/`common`).
 - ASCII hyphen only in all output; never the long-dash codepoints.
-- Backend test command: `bazel test //backend/internal/...` (or a specific package target). Frontend unit: `bazel test //clients/web:unit`; a single Vitest file runs via `pnpm --filter @agentsmesh/web exec vitest run <path>` from repo root (confirm the exact filter name from root `package.json` before first use). E2E: the `e2e-playwright` Playwright project.
+- Backend test command: `bazel test //backend/internal/...` (or a specific package target). Frontend unit: `bazel test //clients/web:unit` (canonical; target at `clients/web/BUILD.bazel:251`), narrowed to a single test with `--test_filter=<TestName>`. There is NO `@agentsmesh/web` pnpm package (deps are Bazel-managed; `clients/web/package.json` does not exist; root `package.json` name is `agentsmesh-workspace-root`), so `pnpm --filter @agentsmesh/web exec vitest run <path>` is invalid and must not be used. For single-file local iteration only, the documented node fallback (per CLAUDE.md) is `cd clients/web && node ../../node_modules/vitest/vitest.mjs run <path>`. Every task step below uses the canonical `bazel test //clients/web:unit` form. E2E: the `e2e-playwright` Playwright project.
 - `selectedBranch` form-state stays `string` (`clients/web/src/components/pod/hooks/useCreatePodFormTypes.ts:20,41`). Do not change its type.
 
 ---
@@ -24,8 +28,11 @@
 ### Task 1: Lock git-provider branch failure modes (provider layer)
 
 No product change; extends the existing httptest-backed provider tests so the
-known gaps (GitHub 429, 403 conflation, no pagination, best-effort default
-branch) are regression-locked before the feature relies on them.
+known gaps are regression-locked before the feature relies on them. The real
+GitHub defect is 403-scope-vs-ratelimit conflation: `github_client.go:70-72`
+maps every 403 to `git.ErrRateLimited`, so a permission/scope 403 is
+indistinguishable from an actual rate-limit. GitHub also has no explicit 429
+branch, no pagination, and a best-effort default-branch derivation.
 
 **Files:**
 - Modify/Test: `backend/internal/infra/git/github_branch_test.go`
@@ -80,7 +87,7 @@ func TestGitHubListBranches_Cases(t *testing.T) {
 			switch {
 			case tc.name == "ratelimit_429_is_opaque":
 				require.Error(t, err)
-				require.NotErrorIs(t, err, git.ErrRateLimited) // GAP lock: GitHub has no 429 branch (github_client.go has no 429 case)
+				require.NotErrorIs(t, err, git.ErrRateLimited) // GAP lock: GitHub has no 429 branch; the real conflation is 403->ErrRateLimited (github_client.go:70-72)
 			case tc.name == "malformed_json":
 				require.Error(t, err)
 			case tc.wantErr != nil:
@@ -130,6 +137,11 @@ git commit -m "test(git): lock ListBranches failure modes across github/gitlab/g
 
 ### Task 2: Service-layer token resolution + provider seam (S1 + S2)
 
+> **Supersedes spec S2.** Spec S2 says "inject `userService` into `Service`".
+> This plan instead routes resolution through `webhookService.ResolveAccessToken`
+> (the `webhookService` already holds `userService`), per locked decision #7. Do
+> NOT add a new `userService` field to `Service` - that would be redundant.
+
 **Files:**
 - Modify: `backend/internal/service/repository/service.go` (add provider factory field + `userService`-backed resolution entry)
 - Modify: `backend/internal/service/repository/service_sync.go:46` (`ListBranches` -> use factory) and add `ListBranchesForUser`
@@ -147,6 +159,11 @@ git commit -m "test(git): lock ListBranches failure modes across github/gitlab/g
 
 - [ ] **Step 1: Write the failing test**
 
+Named tests this step must produce: `TestListBranchesForUser` with subtests
+"explicit token bypasses resolution" (the `TestListBranches_ExplicitTokenWins`
+behavior), "empty token with no credential", "provider error propagates", and
+"unsupported provider degrades" (M4).
+
 `service_branches_test.go`:
 
 ```go
@@ -154,8 +171,8 @@ func TestListBranchesForUser(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("explicit token bypasses resolution and lists", func(t *testing.T) {
-		s := setupTestService(t) // existing helper, service_setup_test.go:11
-		seedRepo(t, s, "github", "https://github.com", "owner/repo")
+		s, db := setupTestService(t) // existing helper, service_setup_test.go:26 (returns *Service, *gorm.DB)
+		seedRepo(t, db, "github", "https://github.com", "owner/repo")
 		var factoryToken string
 		s.SetProviderFactory(func(_, _, token string) (git.Provider, error) {
 			factoryToken = token
@@ -168,20 +185,28 @@ func TestListBranchesForUser(t *testing.T) {
 	})
 
 	t.Run("empty token with no credential returns ErrNoGitCredential", func(t *testing.T) {
-		s := setupTestService(t) // webhookService nil or userService returns empty
-		seedRepo(t, s, "github", "https://github.com", "owner/repo")
+		s, db := setupTestService(t) // webhookService nil or userService returns empty
+		seedRepo(t, db, "github", "https://github.com", "owner/repo")
 		_, err := s.ListBranchesForUser(ctx, 1, 42, "")
 		require.ErrorIs(t, err, repository.ErrNoGitCredential)
 	})
 
 	t.Run("provider error propagates", func(t *testing.T) {
-		s := setupTestService(t)
-		seedRepo(t, s, "github", "https://github.com", "owner/repo")
+		s, db := setupTestService(t)
+		seedRepo(t, db, "github", "https://github.com", "owner/repo")
 		s.SetProviderFactory(func(_, _, _ string) (git.Provider, error) {
 			return &fakeProvider{err: errors.New("provider 5xx")}, nil
 		})
 		_, err := s.ListBranchesForUser(ctx, 1, 42, "tok")
 		require.ErrorContains(t, err, "provider 5xx")
+	})
+
+	t.Run("unsupported provider degrades to ErrNoGitCredential", func(t *testing.T) {
+		s, db := setupTestService(t)
+		seedRepo(t, db, "ssh", "ssh://git@host", "owner/repo")
+		// real factory: git.NewProvider returns git.ErrProviderNotSupported for "ssh"
+		_, err := s.ListBranchesForUser(ctx, 1, 42, "tok")
+		require.ErrorIs(t, err, repository.ErrNoGitCredential)
 	})
 }
 
@@ -195,8 +220,9 @@ func (f *fakeProvider) ListBranches(context.Context, string) ([]*git.Branch, err
 }
 ```
 
-`seedRepo` is a small local helper inserting a `gitprovider.Repository` row via
-the same DB the service uses (model on existing `service_setup_test.go` /
+`seedRepo(t, db, ...)` is a small local helper inserting a
+`gitprovider.Repository` row via the `*gorm.DB` that `setupTestService` returns
+as its second value (model on existing `service_setup_test.go` /
 `repository_integration_test.go` seeding). If a suitable helper already exists,
 reuse it.
 
@@ -262,6 +288,9 @@ func (s *Service) ListBranchesForUser(ctx context.Context, repoID, userID int64,
 	}
 	client, err := s.providerFactory(repo.ProviderType, repo.ProviderBaseURL, token)
 	if err != nil {
+		if errors.Is(err, git.ErrProviderNotSupported) {
+			return nil, ErrNoGitCredential // SSH / unknown provider degrades to free-text, not a 500
+		}
 		return nil, err
 	}
 	branches, err := client.ListBranches(ctx, repo.ExternalID)
@@ -297,16 +326,23 @@ git commit -m "feat(repository): resolve git token server-side for ListBranchesF
 
 ### Task 3: Handlers resolve-then-validate (S5) - Connect + REST
 
+There are THREE call sites that today reject an empty token and must all switch
+to `ListBranchesForUser`:
+1. Connect `ListRepositoryBranches` (`repository_branches.go:28-32`)
+2. Connect `SyncRepositoryBranches` (`repository_branches.go:59-63`) - despite the
+   name, this does NOT sync; it calls the identical `ListBranches`.
+3. REST `ListBranches` (`repositories_branches.go:41-46`)
+
 **Files:**
-- Modify: `backend/internal/api/connect/repository/repository_branches.go:18-44` (drop empty-token reject; call `ListBranchesForUser`)
-- Modify: `backend/internal/api/connect/repository/repository_branches.go:49-75` (`SyncRepositoryBranches` same)
+- Modify: `backend/internal/api/connect/repository/repository_branches.go:18-44` (`ListRepositoryBranches`: drop empty-token reject; call `ListBranchesForUser`)
+- Modify: `backend/internal/api/connect/repository/repository_branches.go:49-75` (`SyncRepositoryBranches`: same change)
 - Modify: `backend/internal/api/connect/repository/repository_mount.go:16` (`mapServiceError`: map `ErrNoGitCredential`)
-- Modify: `backend/internal/api/rest/v1/repositories_branches.go:37-50`
+- Modify: `backend/internal/api/rest/v1/repositories_branches.go:37-50` (REST `ListBranches`)
 - Modify/Test: `backend/internal/api/connect/repository/repository_test.go`
 
 **Interfaces:**
 - Consumes: `repoSvc.ListBranchesForUser(ctx, id, userID, token)` (Task 2); `middleware.GetTenant(ctx).UserID` (`repository_branches.go:115`); `repository.ErrNoGitCredential`.
-- Produces: empty-token Connect call now reaches the service; `ErrNoGitCredential -> connect.CodeFailedPrecondition` (the frontend treats this code as "use free-text fallback").
+- Produces: empty-token Connect call now reaches the service; `ErrNoGitCredential -> connect.CodeFailedPrecondition` on the Connect side, and `apierr.Conflict` (HTTP 409) on the REST side (there is NO 412/`PreconditionFailed` helper in `backend/pkg/apierr/helpers.go`; `Conflict` is the closest existing helper). This REST(409)/Connect(FailedPrecondition) divergence is intentional and harmless: the frontend keys its free-text fallback off error-existence, not the specific code.
 
 - [ ] **Step 1: Write the failing handler test**
 
@@ -336,7 +372,21 @@ func TestListRepositoryBranches_NoCredential_FailedPrecondition(t *testing.T) {
 ```
 
 Extend `fakeRepoService` with `ListBranchesForUser` recording `lastUserID` and
-returning `branches`/`err`.
+returning `branches`/`err`. Note: `fakeRepoService` embeds the
+`RepositoryServiceInterface` (nil interface value), so adding
+`ListBranchesForUser` to the interface compiles, but any test that calls it
+panics at runtime (nil-method dispatch) unless the fake provides an explicit
+override. Every interface method exercised in a test needs its own stub - a
+missing stub is a runtime panic, not a compile error.
+
+Also keep the three existing Connect guard tests passing for the new code path,
+named explicitly: `TestListRepositoryBranches_MissingOrgSlug_InvalidArgument`,
+`TestListRepositoryBranches_NoAuth_Unauthenticated`,
+`TestListRepositoryBranches_NonMember_PermissionDenied`.
+
+REST coverage (T3): add `TestREST_ListBranches_NoCredential_Returns409` in the
+REST handler test asserting empty-token + `ErrNoGitCredential` yields HTTP 409
+via `apierr.Conflict`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -356,16 +406,23 @@ if err != nil {
 }
 ```
 
-Apply the same to `SyncRepositoryBranches`. In `repository_mount.go`
-`mapServiceError`, add:
+Apply the identical change to the Connect `SyncRepositoryBranches` handler
+(`repository_branches.go:59-63`). In `repository_mount.go` `mapServiceError`,
+add:
 
 ```go
 case errors.Is(err, repositoryservice.ErrNoGitCredential):
 	return connect.NewError(connect.CodeFailedPrecondition, err)
 ```
 
-In REST `repositories_branches.go`, drop the `Access token required` 400; when
-the query/header token is empty, pass it through to `ListBranchesForUser(c.Request.Context(), repoID, tenant.UserID, accessToken)`; map `ErrNoGitCredential` to a 412/409 JSON error (use the existing `apierr` helper closest to FailedPrecondition).
+`ErrNoGitCredential` already absorbs the unsupported-provider (SSH/unknown) case
+at the service layer (Task 2, M4), so no extra handler branch is needed for it.
+
+In REST `repositories_branches.go` (`ListBranches`, `:41-46`), drop the
+`Access token required` 400; when the query/header token is empty, pass it
+through to `ListBranchesForUser(c.Request.Context(), repoID, tenant.UserID, accessToken)`;
+map `ErrNoGitCredential` to HTTP 409 via `apierr.Conflict` (there is no 412/
+`PreconditionFailed` helper in `apierr`; `Conflict` is the chosen equivalent).
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -392,8 +449,10 @@ git commit -m "feat(repository): resolve-then-validate branch token in Connect+R
 
 - [ ] **Step 1: Write the failing integration test**
 
+No build tag - backend integration tests are plain `_integration_test.go` files
+listed in the Bazel `go_test` srcs (no backend test uses `//go:build` tags).
+
 ```go
-//go:build integration || !unit
 func TestListBranchesForUser_Integration(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/branches") {
@@ -425,10 +484,15 @@ httptest boundary exercises `git.NewProvider` end to end. Model
 provider-token storage is tested elsewhere; if encrypted-token seeding is
 non-trivial, reuse the closest existing integration seeding helper.
 
+Add `service_branches_integration_test.go` to the `repository_test`
+`go_test` srcs in `backend/internal/service/repository/BUILD.bazel`. Running
+`bazel run //:gazelle` regenerates this srcs list from the package files, so
+prefer gazelle over a hand-edit.
+
 - [ ] **Step 2: Run to verify it fails, then passes after Task 2/3 are in**
 
 Run: `bazel test //backend/internal/service/repository:repository_test --test_filter=TestListBranchesForUser_Integration`
-Expected: PASS (Task 2/3 already landed). If the build tag excludes it, run with the integration config the repo uses for `*_integration_test.go`.
+Expected: PASS (Task 2/3 already landed).
 
 - [ ] **Step 3: Commit**
 
@@ -508,11 +572,13 @@ test("stale response for repo A is dropped after switching to repo B (S4)", asyn
   act(() => result.current.load());
   rerender({ id: 2 });
   act(() => result.current.load());
-  deferred[2]({ items: ["b-branch"], total: 1, limit: 100, offset: 0 });
+  // Resolve B first; wait deterministically for B to commit.
+  await act(async () => { deferred[2]({ items: ["b-branch"], total: 1, limit: 100, offset: 0 }); });
   await waitFor(() => expect(result.current.branches).toEqual(["b-branch"]));
-  deferred[1]({ items: ["a-branch"], total: 1, limit: 100, offset: 0 }); // late A
-  await Promise.resolve();
-  expect(result.current.branches).toEqual(["b-branch"]); // A did not overwrite B
+  // Now resolve the stale A inside act() so React flushes synchronously - no
+  // reliance on microtask timing for the negative assertion.
+  await act(async () => { deferred[1]({ items: ["a-branch"], total: 1, limit: 100, offset: 0 }); });
+  expect(result.current.branches).toEqual(["b-branch"]); // stale A did not overwrite B
 });
 
 test("fetch error sets fallbackToFreeText", async () => {
@@ -526,7 +592,7 @@ test("fetch error sets fallbackToFreeText", async () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/hooks/__tests__/useRepositoryBranches.test.ts`
+Run: `bazel test //clients/web:unit --test_filter=useRepositoryBranches`
 Expected: FAIL (module not found).
 
 - [ ] **Step 3: Implement the hook**
@@ -538,9 +604,14 @@ entry's `reqToken` still matches the token captured at fetch start (S4). On
 reject, set `status="error"` (drives `fallbackToFreeText`). `refresh()` bumps the
 token and forces a fetch. Keep the file under 200 lines.
 
+The stale-guard test (test 4) must not rely on microtask timing - resolve each
+deferred promise inside `await act(async () => ...)` so React flushes
+synchronously, then assert. A bare `await Promise.resolve()` can pass even when
+the guard is broken.
+
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/hooks/__tests__/useRepositoryBranches.test.ts`
+Run: `bazel test //clients/web:unit --test_filter=useRepositoryBranches`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -613,7 +684,7 @@ test("falls back to plain text input when hook signals error", () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/components/pod/CreatePodForm/__tests__/BranchCombobox.test.tsx`
+Run: `bazel test //clients/web:unit --test_filter=BranchCombobox`
 Expected: FAIL (module not found).
 
 - [ ] **Step 3: Implement the component**
@@ -629,7 +700,7 @@ the option-list into a sibling `BranchOptionList.tsx`.
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/components/pod/CreatePodForm/__tests__/BranchCombobox.test.tsx`
+Run: `bazel test //clients/web:unit --test_filter=BranchCombobox`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -672,7 +743,7 @@ fallback renders it.)
 
 - [ ] **Step 2: Type-check + existing form tests**
 
-Run: `bazel build //clients/web:src && pnpm --filter @agentsmesh/web exec vitest run clients/web/src/components/pod/CreatePodForm/__tests__/CreatePodForm.test.tsx`
+Run: `bazel build //clients/web:src && bazel test //clients/web:unit --test_filter=CreatePodForm`
 Expected: PASS (form-state contract unchanged).
 
 - [ ] **Step 3: Commit**
@@ -722,7 +793,7 @@ any existing `TicketDetailSidebar` test or construct a minimal `Ticket`).
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/components/tickets/__tests__/TicketDetailSidebar.podRefresh.test.tsx`
+Run: `bazel test //clients/web:unit --test_filter=TicketDetailSidebar.podRefresh`
 Expected: FAIL (no `onPodCreated` wired).
 
 - [ ] **Step 3: Wire the callback**
@@ -742,7 +813,7 @@ In `TicketDetailSidebar.tsx`, import `invalidateTicketPods` from
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/components/tickets/__tests__/TicketDetailSidebar.podRefresh.test.tsx`
+Run: `bazel test //clients/web:unit --test_filter=TicketDetailSidebar.podRefresh`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -756,38 +827,54 @@ git commit -m "fix(web): refresh ticket pods when spawning a pod in the ticket v
 
 ### Task 9: Populate `ticket_slug` on `pod:created`, consistently (S3 backend)
 
-The `pod:created` wire event must always carry a `PodCreatedEventData` (with
-`ticket_slug`). Today the deterministic emitter (`mutations.go:84`) sends
-`PodCreatedEventData` but leaves `ticket_slug` empty; the race-prone status
-callback (`eventbus_pod.go:38-46`) sends a `PodStatusChangedEventData` under the
-same event type. Make both emit `PodCreatedEventData` with the slug populated.
+The `pod:created` wire event SHOULD carry a `PodCreatedEventData` (with
+`ticket_slug`) from every emitter. THREE emitters map to `EventPodCreated`:
+1. Deterministic emitter (`mutations.go:84`) - sends `PodCreatedEventData` but
+   leaves `ticket_slug` empty.
+2. Race-prone status callback (`eventbus_pod.go:38-46`) - sends a
+   `PodStatusChangedEventData` under the same event type.
+3. `agentpod/event_publisher.go:47,60-64` - maps `PodEventCreated ->
+   eventbus.EventPodCreated` but packs `PodStatusChangedEventData`; wired in
+   `main.go:76-77`. This one is LATENT: `PublishPodEvent` has no current caller,
+   so it is not a live bug today. We fix it anyway so the wire contract holds if
+   a caller is added later. (Frontend safety does NOT depend on this being
+   fixed - see the tolerant-decode note in Task 10.)
+
+Make all three emit `PodCreatedEventData` with the slug populated.
 
 **Files:**
 - Modify: `backend/internal/api/connect/pod/mutations.go:79-103` (`publishPodCreated` - set `TicketSlug`)
 - Modify: `backend/cmd/server/eventbus_pod.go:20-62` (EventPodCreated branch -> emit `PodCreatedEventData` incl. resolved `ticket_slug`)
-- Modify/Test: `backend/internal/api/connect/pod/mutations_test.go` (or nearest existing pod-mutation test)
+- Modify: `backend/internal/service/agentpod/event_publisher.go:47,60-64` (third emitter - pack `PodCreatedEventData` with `ticket_slug` under `EventPodCreated`)
+- Modify/Test: `backend/internal/api/connect/pod/server_test.go` (the real pod-test file; `mutations_test.go` does NOT exist)
 
 **Interfaces:**
-- Consumes: `req.Msg.TicketSlug` already available in `CreatePod` (`mutations.go:48`); `eventsv1.PodCreatedEventData{..., TicketSlug}` (`proto/events/v1/event_data.proto:20-29`).
-- Produces: every `pod:created` event decodes as `PodCreatedEventData` with `ticket_slug` set when the pod belongs to a ticket.
+- Consumes: `req.Msg.TicketSlug` already available in `CreatePod` (`mutations.go:48`); `eventsv1.PodCreatedEventData{..., TicketSlug}` (`proto/events/v1/event_data.proto:21-29`).
+- Produces: all three `pod:created` emitters pack `PodCreatedEventData` with `ticket_slug` set when the pod belongs to a ticket. (The frontend tolerates a stale `PodStatusChangedEventData` payload anyway - Task 10 - so this is best-effort consistency, not a hard runtime guarantee.)
 
 - [ ] **Step 1: Write the failing test (deterministic emitter)**
 
-In the pod-mutations test, capture the published event and assert the slug:
+Add this to `server_test.go` (the real pod-test file in the `pod_test` srcs).
+Capture the published event and assert the slug:
 
 ```go
 func TestPublishPodCreated_SetsTicketSlug(t *testing.T) {
 	bus := newCapturingEventBus(t) // records published events
 	srv := newPodServerWithBus(t, bus)
-	srv.publishPodCreatedWithSlug(context.Background(), &podDomain.Pod{PodKey: "p1", OrganizationID: 9, TicketID: ptr(int64(3))}, "AM-3")
+	srv.publishPodCreated(context.Background(), &podDomain.Pod{PodKey: "p1", OrganizationID: 9, TicketID: ptr(int64(3))}, "AM-3")
 	ev := bus.last()
 	data := decodePodCreated(t, ev) // unmarshal PodCreatedEventData
 	require.Equal(t, "AM-3", data.TicketSlug)
 }
 ```
 
-(Adjust to the real helper names; if no capturing bus helper exists, add a
-minimal one in the test file.)
+The helpers `newCapturingEventBus`, `newPodServerWithBus`, `decodePodCreated`,
+and `ptr` are illustrative - create them locally if absent, modeling on the
+existing pod-test setup in `server_test.go`. If you instead create a new
+`mutations_test.go`, add it to the `pod_test` `go_test` srcs in
+`backend/internal/api/connect/pod/BUILD.bazel` (or run `bazel run //:gazelle`).
+The method is named `publishPodCreated` consistently (Step 3) - not
+`publishPodCreatedWithSlug`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -810,7 +897,12 @@ func (s *Server) publishPodCreated(ctx context.Context, pod *podDomain.Pod, tick
 }
 ```
 
-Update the `CreatePod` call site to `s.publishPodCreated(ctx, result.Pod, optionalString(req.Msg.TicketSlug))`.
+Update the `CreatePod` call site to
+`s.publishPodCreated(ctx, result.Pod, req.Msg.GetTicketSlug())`. Do NOT wrap in
+`optionalString` - that returns `*string` (`mutations.go:301`), but the new
+`ticketSlug` parameter is `string`; `GetTicketSlug()` returns `string` directly.
+Prefer a slug resolved from `result.Pod` / the orchestrator result if one is
+exposed, since `req.Msg.TicketSlug` is unvalidated request input.
 
 - [ ] **Step 4: Make the status-callback emitter consistent**
 
@@ -821,16 +913,26 @@ ticket slug (LEFT JOIN tickets on `pods.ticket_id = tickets.id`), and in the
 (`EventPodStatusChanged`, `EventPodTerminated`, `EventPodAgentChanged`) using
 `PodStatusChangedEventData` unchanged.
 
-- [ ] **Step 5: Run to verify pass + no regressions**
+- [ ] **Step 5: Make the third (latent) emitter consistent**
 
-Run: `bazel test //backend/internal/api/connect/pod/... //backend/cmd/server/...`
+In `agentpod/event_publisher.go` (`:47,60-64`), the `PodEventCreated ->
+EventPodCreated` mapping packs `PodStatusChangedEventData`. Change the
+`EventPodCreated` case to pack `PodCreatedEventData` with `ticket_slug`
+populated, matching the other two emitters. This emitter has no current caller
+(`PublishPodEvent` is unwired), so no test asserts its runtime behavior today;
+fix it to keep the wire contract correct for any future caller, and leave the
+other event-type cases untouched.
+
+- [ ] **Step 6: Run to verify pass + no regressions**
+
+Run: `bazel test //backend/internal/api/connect/pod/... //backend/cmd/server/... //backend/internal/service/agentpod/...`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/internal/api/connect/pod/ backend/cmd/server/eventbus_pod.go
-git commit -m "feat(pod): carry ticket_slug on pod:created from both emitters (S3 backend)"
+git add backend/internal/api/connect/pod/ backend/cmd/server/eventbus_pod.go backend/internal/service/agentpod/event_publisher.go
+git commit -m "feat(pod): carry ticket_slug on pod:created from all three emitters (S3 backend)"
 ```
 
 ---
@@ -860,6 +962,13 @@ test("pod:created without ticketSlug does not invalidate", () => {
   handlePodEvent(makePodCreatedEvent({ podKey: "p1", ticketSlug: "" }));
   expect(invalidate).not.toHaveBeenCalled();
 });
+
+test("pod:status_changed keeps existing behavior and is not decoded as PodCreatedEventData", () => {
+  handlePodEvent(makePodStatusChangedEvent({ podKey: "p1" }));
+  expect(refreshSidebar).toHaveBeenCalled();      // existing sidebar refresh unchanged
+  expect(refreshMeshTopology).toHaveBeenCalled(); // existing mesh refresh unchanged
+  expect(invalidate).not.toHaveBeenCalled();      // status_changed never invalidates ticket pods
+});
 ```
 
 `makePodCreatedEvent` builds a `RealtimeEvent` of type `pod:created` whose
@@ -869,7 +978,7 @@ constructs event data).
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/providers/__tests__/realtimePodHandlers.test.ts`
+Run: `bazel test //clients/web:unit --test_filter=realtimePodHandlers`
 Expected: FAIL (handler ignores payload).
 
 - [ ] **Step 3: Decode + invalidate in the handler**
@@ -891,13 +1000,18 @@ case "pod:restarting": {
 }
 ```
 
-Add the `PodCreatedEventDataSchema` + `invalidateTicketPods` imports. Note: this
-is safe only because Task 9 guarantees every `pod:created` carries a
-`PodCreatedEventData` (the `pod:restarting` branch is NOT decoded).
+Add the `PodCreatedEventDataSchema` + `invalidateTicketPods` imports. Decode
+safety is a tolerant degradation, NOT a hard guarantee: `decodeEventData` uses
+`fromJson(..., {ignoreUnknownFields:true})` (`types.ts:74-79`), so even if a
+stale emitter ships a `PodStatusChangedEventData` payload under `pod:created`,
+it decodes to `ticketSlug=""` and the handler silently skips invalidation
+(degrades to no-refresh, never crashes). Task 9 makes the populated-slug case
+the norm; this handler never throws on the mismatched-payload case. The
+`pod:restarting` branch is NOT decoded.
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm --filter @agentsmesh/web exec vitest run clients/web/src/providers/__tests__/realtimePodHandlers.test.ts`
+Run: `bazel test //clients/web:unit --test_filter=realtimePodHandlers`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -920,17 +1034,26 @@ git commit -m "feat(web): invalidate ticket pods on realtime pod:created (S3 fro
 ### Task 11: Branch dropdown E2E
 
 **Files:**
+- Create: `clients/web/e2e-playwright/fixtures/seed-repo-with-fake-provider.ts`
 - Create: `clients/web/e2e-playwright/pages/create-pod.page.ts`
 - Create: `clients/web/e2e-playwright/tests/pod/branch-dropdown.spec.ts`
 
-- [ ] **Step 1: Write the page object**
+- [ ] **Step 1: Create the `seedRepoWithFakeProvider` fixture**
+
+This fixture does NOT pre-exist - create it. A Playwright fixture extension (in
+`fixtures/`) that inserts a repo row pointing `ProviderBaseURL` at a fake
+provider responding with the given branch set or status code. Reuse the existing
+DB-seeding fixture (`db.fixture.ts`) plus a small fake-provider helper (model on
+`helpers/`). Signature: `seedRepoWithFakeProvider({ branches?, status? })`.
+
+- [ ] **Step 2: Write the page object**
 
 A `CreatePodPage` exposing role-based locators: `openAdvanced()`,
 `branchCombobox()` (`getByRole("combobox")` scoped to the branch field),
 `branchOption(name)` (`getByRole("option", { name })` or `getByText`),
 `submit()`. Follow `workspace.page.ts` conventions; explicit return types.
 
-- [ ] **Step 2: Write the specs**
+- [ ] **Step 3: Write the specs**
 
 ```ts
 test("branch dropdown loads branches lazily on open", async ({ page, seedRepoWithFakeProvider }) => {
@@ -956,17 +1079,14 @@ test("branch fetch failure falls back to free-text", async ({ page, seedRepoWith
 });
 ```
 
-`seedRepoWithFakeProvider` is a fixture extension (add to `fixtures/`) that
-inserts a repo row pointing `ProviderBaseURL` at a fake provider responding with
-the given branch set or status. Reuse the existing DB-seeding fixture
-(`db.fixture.ts`) plus a small fake-provider helper (model on `helpers/`).
+Both specs consume the `seedRepoWithFakeProvider` fixture from Step 1.
 
-- [ ] **Step 3: Run**
+- [ ] **Step 4: Run**
 
 Run the `e2e-playwright` project for `tests/pod/branch-dropdown.spec.ts`.
 Expected: PASS (requires the dev stack / CI harness the other e2e specs use).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add clients/web/e2e-playwright/pages/create-pod.page.ts clients/web/e2e-playwright/tests/pod/branch-dropdown.spec.ts clients/web/e2e-playwright/fixtures/
@@ -1027,6 +1147,45 @@ git commit -m "test(e2e): ticket-view pod refresh same-tab and realtime"
 - Spec Feature 2 same-tab -> Task 8. S3 realtime -> Tasks 9, 10.
 - E2E -> Tasks 11, 12.
 - Concurrency 6a (per-tab dedupe) -> Task 5 test 3; 6b (stale guard) -> Task 5 test 4; multitab 6a-across-tabs -> Task 12 second spec.
-- Scenarios: no-credential -> Tasks 2/3/5; provider-error -> Tasks 1/2/5; success variants -> Tasks 1/11; logout-mid-fetch -> Task 5 error path (auth rejection is the same error->fallback branch); repo-added-while-open -> documented no-auto-refresh (per-repoId cache, Task 5; no task needed).
+- Scenarios: no-credential -> Tasks 2/3/5; provider-error -> Tasks 1/2/5; success variants -> Tasks 1/11; logout-mid-fetch -> Task 5 error path (auth rejection is the same error->fallback branch); repo-added-while-open -> documented known behavior, NO unit test. The per-repoId cache holds no live repo subscription for this panel, so a repo added while the dropdown is open does not auto-appear; the user re-opens the form. This is deliberate (conservative) and intentionally untested at the unit level.
 
-**Supersedes test plan:** S3 needs NO new proto field - `PodCreatedEventData.ticket_slug` already exists (`event_data.proto:20-29`) and is already decoded frontend-side. The realtime work is populating the slug from both emitters (Task 9) and decoding it in the handler (Task 10), not a wire-format addition.
+**Supersedes test plan:** S3 needs NO new proto field - `PodCreatedEventData.ticket_slug` already exists (`event_data.proto:21-29`); the schema is already available frontend-side, but the `pod:created` handler does NOT decode it today (Task 10 adds that). The realtime work is populating the slug from all three emitters (Task 9) and decoding it in the handler (Task 10), not a wire-format addition.
+
+---
+
+## Resolutions Applied in Rev 2
+
+Adversarial review (lite: 3 reviewers) produced 16 findings plus 4 traceability
+gaps; all 20 applied. When a recommendation was ambiguous, the most conservative
+option was taken and recorded here.
+
+**Critical**
+- **C1** - Replaced every invalid `pnpm --filter @agentsmesh/web exec vitest run <path>` invocation (Global Constraints + Tasks 5, 6, 7, 8, 10) with the canonical `bazel test //clients/web:unit` (plus `--test_filter` where a test is named; target `clients/web/BUILD.bazel:251`). The node fallback is documented once in Global Constraints.
+- **C2** - Task 9 `CreatePod` call site now passes `req.Msg.GetTicketSlug()` (`string`), not `optionalString(...)` (`*string`); added a note preferring a resolved slug over unvalidated request input.
+- **C3** - Enumerated the THIRD `EventPodCreated` emitter (`agentpod/event_publisher.go:47,60-64`, wired `main.go:76-77`, latent/no caller); added Task 9 Step 5 to pack `PodCreatedEventData` there too. Softened the Task 10 decode-safety claim to tolerant degradation via `fromJson(..., {ignoreUnknownFields:true})` (`types.ts:74-79`): a stale payload decodes to `ticketSlug=""` and skips invalidation, never crashes.
+
+**High**
+- **H1** - REST maps `ErrNoGitCredential` to `apierr.Conflict` (409); no 412/`PreconditionFailed` helper exists. Documented the REST(409)/Connect(FailedPrecondition) divergence; frontend keys off error-existence.
+- **H2** - Enumerated all three empty-token call sites: Connect `ListRepositoryBranches` (`:28-32`), Connect `SyncRepositoryBranches` (`:59-63`, which does not actually sync), REST `ListBranches` (`:41-46`).
+- **H3** - Task 2 note: plan supersedes spec S2's "inject `userService`" in favor of `webhookService.ResolveAccessToken`; no new `userService` field on `Service`.
+- **H4** - Task 1 framing fixed: real defect is 403-scope-vs-ratelimit conflation (`github_client.go:70-72`), not the 429 gap; 429 negative assertion retained.
+- **H5** - Task 3 note: `fakeRepoService` embeds a nil interface; any interface method used in a test needs an explicit stub (missing = runtime panic, not compile error).
+
+**Medium**
+- **M1** - Dropped the non-existent `//go:build integration || !unit` tag (no backend test uses build tags); added an explicit step to add `service_branches_integration_test.go` to the `repository_test` srcs (via `bazel run //:gazelle`); removed the build-tag hedge.
+- **M2** - Pointed Task 9 tests at the real `server_test.go` (not the non-existent `mutations_test.go`); marked `newCapturingEventBus`/`newPodServerWithBus`/`decodePodCreated`/`ptr` as create-locally-if-absent; reconciled the method name to `publishPodCreated` throughout.
+- **M3** - Task 5 stale-guard test made deterministic: deferred promises resolved inside `await act(async () => ...)`, not behind a bare `await Promise.resolve()`.
+- **M4** - Service layer maps `git.ErrProviderNotSupported` (SSH/unknown) to `ErrNoGitCredential` so unsupported repos degrade to free-text instead of a 500; added a service-layer test case.
+
+**Low**
+- **L1** - `setupTestService(t)` returns `(*Service, *gorm.DB)` (`service_setup_test.go:26`); test now binds `s, db :=` and threads `db` into `seedRepo`.
+- **L2** - Added a top-of-plan note to re-grep and re-pin all cited line numbers at execution time; corrected the `event_data.proto` reference to `:21-29` where it appears.
+- **L3** - Coverage-map wording corrected: the schema is available frontend-side but the `pod:created` handler does not yet decode it (Task 10 adds that).
+
+**Traceability**
+- **T1** - Task 10 adds a `pod:status_changed` regression-lock test asserting `refreshSidebar()`/`refreshMeshTopology()` still fire and the payload is not decoded as `PodCreatedEventData`.
+- **T2** - Scenario-4 contradiction resolved conservatively: repo-added-while-open is documented known behavior with NO unit test (per-repoId cache, no live repo subscription); contradiction removed from the coverage map.
+- **T3** - Task 3 adds an explicit named REST test `TestREST_ListBranches_NoCredential_Returns409`.
+- **T4** - Named the previously implicit tests: `TestListBranchesForUser` subtests (incl. the explicit-token-wins case), the three Connect guard tests (`_MissingOrgSlug_InvalidArgument` / `_NoAuth_Unauthenticated` / `_NonMember_PermissionDenied`), and the `seedRepoWithFakeProvider` fixture as an explicit Task 11 Step 1.
+
+No finding was deferred.
