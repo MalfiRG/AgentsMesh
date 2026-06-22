@@ -83,7 +83,6 @@ export function BranchCombobox({ repoId, value, onChange, error, t }: BranchComb
                   e.preventDefault();
                   selectBranch(branch);
                 }}
-                onClick={() => selectBranch(branch)}
               >
                 {branch}
               </li>

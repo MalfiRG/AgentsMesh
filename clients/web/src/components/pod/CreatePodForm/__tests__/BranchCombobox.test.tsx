@@ -35,7 +35,8 @@ describe("BranchCombobox", () => {
     const onChange = vi.fn();
     render(<BranchCombobox repoId={1} value="" onChange={onChange} t={t} />);
     fireEvent.focus(screen.getByRole("combobox"));
-    fireEvent.click(screen.getByText("develop"));
+    fireEvent.pointerDown(screen.getByText("develop"));
+    expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("develop");
   });
 
