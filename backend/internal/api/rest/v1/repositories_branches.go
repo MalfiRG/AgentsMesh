@@ -41,8 +41,6 @@ func (h *RepositoryHandler) ListBranches(c *gin.Context) {
 		accessToken = c.GetHeader("X-Git-Access-Token")
 	}
 
-	// Connect uses CodeFailedPrecondition; REST uses 409 Conflict — the
-	// frontend keys its fallback off error-existence, not the specific code.
 	branches, err := h.repositoryService.ListBranchesForUser(c.Request.Context(), repoID, tenant.UserID, accessToken)
 	if err != nil {
 		if errors.Is(err, repositoryservice.ErrNoGitCredential) {

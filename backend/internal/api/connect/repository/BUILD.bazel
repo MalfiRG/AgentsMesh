@@ -30,7 +30,10 @@ go_library(
 
 go_test(
     name = "repository_test",
-    srcs = ["repository_test.go"],
+    srcs = [
+        "repository_mount_test.go",
+        "repository_test.go",
+    ],
     embed = [":repository"],
     deps = [
         "//backend/internal/domain/gitprovider",
