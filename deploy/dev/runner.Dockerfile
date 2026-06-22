@@ -27,13 +27,14 @@ RUN npm install -g \
         @anthropic-ai/claude-code \
         @openai/codex \
         @google/gemini-cli \
+        @earendil-works/pi-coding-agent \
     && npm cache clean --force
 
 # Non-root user the runner runs as. Owns ~/ for AI CLI configs and
 # /workspace for pod scratch space. Pre-create the runtime dirs so a
 # fresh named volume for ~/.agentsmesh/ has runner-writable ownership.
 RUN useradd --create-home --uid 1000 --shell /bin/bash runner \
-    && mkdir -p /workspace /app /home/runner/.agentsmesh /home/runner/.claude /home/runner/.codex /home/runner/.gemini \
+    && mkdir -p /workspace /app /home/runner/.agentsmesh /home/runner/.claude /home/runner/.codex /home/runner/.gemini /home/runner/.pi \
     && chown -R runner:runner /workspace /app /home/runner \
     && echo 'runner ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/runner
 

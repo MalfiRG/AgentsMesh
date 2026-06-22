@@ -170,6 +170,7 @@ services:
       - runner_claude_config:/home/runner/.claude
       - runner_codex_config:/home/runner/.codex
       - runner_gemini_config:/home/runner/.gemini
+      - runner_pi_config:/home/runner/.pi
     ports:
       # Expose the runner's MCP HTTP server to the host so tests/mcp-e2e/
       # can drive it. Container always listens on 19000; host port is
@@ -225,6 +226,7 @@ services:
       - runner2_claude_config:/home/runner/.claude
       - runner2_codex_config:/home/runner/.codex
       - runner2_gemini_config:/home/runner/.gemini
+      - runner2_pi_config:/home/runner/.pi
     ports:
       # Worktree-scoped host port for runner-2's MCP server. Specs that
       # need to drive runner-2 directly (rather than via runner-1's fallback
@@ -296,8 +298,10 @@ volumes:
   runner_claude_config:
   runner_codex_config:
   runner_gemini_config:
+  runner_pi_config:
   runner2_workspace:
   runner2_config:
   runner2_claude_config:
   runner2_codex_config:
   runner2_gemini_config:
+  runner2_pi_config:

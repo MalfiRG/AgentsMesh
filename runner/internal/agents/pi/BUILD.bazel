@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pi",
+    srcs = [
+        "parser.go",
+        "register.go",
+    ],
+    importpath = "github.com/anthropics/agentsmesh/runner/internal/agents/pi",
+    visibility = ["//runner:__subpackages__"],
+    deps = [
+        "//runner/internal/agentkit",
+        "//runner/internal/logger",
+        "//runner/internal/tokenusage",
+    ],
+)
+
+alias(
+    name = "go_default_library",
+    actual = ":pi",
+    visibility = ["//runner:__subpackages__"],
+)
+
+go_test(
+    name = "pi_test",
+    srcs = ["parser_test.go"],
+    embed = [":pi"],
+    deps = [
+        "//runner/internal/agents/pi/testsupport",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -75,6 +75,7 @@ go_library(
         "//runner/internal/agents/gemini",
         "//runner/internal/agents/loopal",
         "//runner/internal/agents/opencode",
+        "//runner/internal/agents/pi",
         "//runner/internal/autopilot",
         "//runner/internal/cache",
         "//runner/internal/client",
