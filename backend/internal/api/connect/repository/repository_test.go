@@ -26,7 +26,8 @@ func (f fakeOrg) GetSlug() string { return f.slug }
 func (f fakeOrg) GetName() string { return f.slug }
 
 type fakeOrgService struct {
-	role string
+	role     string
+	noMember bool
 }
 
 func (f *fakeOrgService) GetBySlug(_ context.Context, slug string) (middleware.OrganizationGetter, error) {
@@ -35,8 +36,13 @@ func (f *fakeOrgService) GetBySlug(_ context.Context, slug string) (middleware.O
 	}
 	return fakeOrg{id: 7, slug: slug}, nil
 }
-func (f *fakeOrgService) IsMember(context.Context, int64, int64) (bool, error) { return true, nil }
-func (f *fakeOrgService) GetMemberRole(context.Context, int64, int64) (string, error) {
+func (f *fakeOrgService) IsMember(_ context.Context, _, _ int64) (bool, error) {
+	return !f.noMember, nil
+}
+func (f *fakeOrgService) GetMemberRole(_ context.Context, _, _ int64) (string, error) {
+	if f.noMember {
+		return "", errors.New("not a member")
+	}
 	return f.role, nil
 }
 
@@ -44,9 +50,12 @@ func (f *fakeOrgService) GetMemberRole(context.Context, int64, int64) (string, e
 // methods used by ResolveOrgScope-followed paths need real behavior.
 type fakeRepoService struct {
 	repositoryservice.RepositoryServiceInterface
-	repos    []*gitprovider.Repository
-	getByID  func(context.Context, int64) (*gitprovider.Repository, error)
-	getBySlg func(context.Context, int64, string, string, string) (*gitprovider.Repository, error)
+	repos      []*gitprovider.Repository
+	getByID    func(context.Context, int64) (*gitprovider.Repository, error)
+	getBySlg   func(context.Context, int64, string, string, string) (*gitprovider.Repository, error)
+	branches   []string
+	err        error
+	lastUserID int64
 }
 
 func (f *fakeRepoService) ListByOrganizationForUser(
@@ -71,10 +80,36 @@ func (f *fakeRepoService) GetBySlug(
 	return nil, repositoryservice.ErrRepositoryNotFound
 }
 
+func (f *fakeRepoService) ListBranchesForUser(
+	_ context.Context, _ int64, userID int64, _ string,
+) ([]string, error) {
+	f.lastUserID = userID
+	return f.branches, f.err
+}
+
 // ctxAsUser populates the auth-interceptor stand-in: UserID matters because
 // ResolveOrgScope rejects empty TenantContext as Unauthenticated.
 func ctxAsUser(userID int64) context.Context {
 	return middleware.SetTenant(context.Background(), &middleware.TenantContext{UserID: userID})
+}
+
+func fakeOrgSvc() *fakeOrgService { return &fakeOrgService{role: "admin"} }
+
+// namesOf extracts branch names from proto Branch items.
+func namesOf(items []*repositoryv1.Branch) []string {
+	out := make([]string, 0, len(items))
+	for _, b := range items {
+		out = append(out, b.GetName())
+	}
+	return out
+}
+
+func orgRepo() *gitprovider.Repository {
+	return &gitprovider.Repository{
+		ID:             1,
+		OrganizationID: 7,
+		Visibility:     "organization",
+	}
 }
 
 // connectCodeOf is the canonical accessor for the Connect error code,

@@ -104,6 +104,7 @@ go_test(
         "pod_create_integration_test.go",
         "pod_create_test.go",
         "pod_terminate_test.go",
+        "repositories_branches_test.go",
         "repositories_webhook_struct_test.go",
     ],
     embed = [":rest"],

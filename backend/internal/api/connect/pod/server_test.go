@@ -3,17 +3,22 @@ package podconnect
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/anthropics/agentsmesh/backend/internal/domain/agentpod"
+	"github.com/anthropics/agentsmesh/backend/internal/infra/eventbus"
 	"github.com/anthropics/agentsmesh/backend/internal/middleware"
 	agentpodservice "github.com/anthropics/agentsmesh/backend/internal/service/agentpod"
 	billingservice "github.com/anthropics/agentsmesh/backend/internal/service/billing"
 	runner "github.com/anthropics/agentsmesh/backend/internal/service/runner"
+	eventsv1 "github.com/anthropics/agentsmesh/proto/gen/go/events/v1"
 	podv1 "github.com/anthropics/agentsmesh/proto/gen/go/pod/v1"
 )
 
@@ -143,4 +148,57 @@ func TestMapServiceError(t *testing.T) {
 			assert.Equal(t, tc.want, connectCodeOf(t, got))
 		})
 	}
+}
+
+// =====================================================================
+// publishPodCreated — ticket_slug propagation
+// =====================================================================
+
+func ptrInt64(v int64) *int64 { return &v }
+
+func TestPublishPodCreated_SetsTicketSlug(t *testing.T) {
+	bus := eventbus.NewEventBus(nil, nil)
+	defer bus.Close()
+
+	var (
+		mu       sync.Mutex
+		captured *eventbus.Event
+		wg       sync.WaitGroup
+	)
+	wg.Add(1)
+	bus.Subscribe(eventbus.EventPodCreated, func(e *eventbus.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		captured = e
+		wg.Done()
+	})
+
+	srv := NewServer(nil, &fakeOrgService{role: "admin"}, WithEventBus(bus))
+
+	pod := &agentpod.Pod{
+		PodKey:         "p1",
+		OrganizationID: 9,
+		TicketID:       ptrInt64(3),
+	}
+	srv.publishPodCreated(context.Background(), pod, "AM-3")
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pod:created event not received within timeout")
+	}
+
+	mu.Lock()
+	ev := captured
+	mu.Unlock()
+	require.NotNil(t, ev)
+
+	var data eventsv1.PodCreatedEventData
+	require.NoError(t, protojson.Unmarshal(ev.Data, &data))
+	require.Equal(t, "AM-3", data.TicketSlug)
 }

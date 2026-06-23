@@ -5,9 +5,11 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import {
   type RealtimeEvent,
   decodeEventData,
+  PodCreatedEventDataSchema,
   PodStatusChangedEventDataSchema,
   PodInitProgressEventDataSchema,
 } from "@/lib/realtime";
+import { invalidateTicketPods } from "@/hooks/useTicketPods";
 
 // A created/restarting pod must enter the filtered sidebar; the server filter is
 // authoritative, so refetch the active filter (silent = no spinner). Status-only
@@ -26,6 +28,10 @@ export function handlePodEvent(event: RealtimeEvent) {
     case "pod:restarting": {
       refreshSidebar();
       refreshMeshTopology();
+      if (event.type === "pod:created") {
+        const data = decodeEventData(PodCreatedEventDataSchema, event.data);
+        if (data.ticketSlug) invalidateTicketPods(data.ticketSlug);
+      }
       break;
     }
     case "pod:status_changed": {

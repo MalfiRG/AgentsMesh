@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/anthropics/agentsmesh/backend/internal/domain/gitprovider"
+	"github.com/anthropics/agentsmesh/backend/internal/infra/git"
 )
 
 var (
@@ -13,18 +14,26 @@ var (
 	ErrRepositoryExists      = errors.New("repository already exists")
 	ErrNoPermission          = errors.New("no permission to access this repository")
 	ErrRepositoryHasLoopRefs = errors.New("cannot delete: repository is referenced by one or more loops")
+	ErrNoGitCredential       = errors.New("no git credential available to list branches")
+	ErrListBranchesProvider  = errors.New("failed to list branches from provider")
 )
 
+type providerFactory func(providerType, baseURL, token string) (git.Provider, error)
+
 type Service struct {
-	repo           gitprovider.RepositoryRepo
-	webhookService *WebhookService
+	repo            gitprovider.RepositoryRepo
+	webhookService  *WebhookService
+	providerFactory providerFactory
 }
 
 func NewService(repo gitprovider.RepositoryRepo) *Service {
 	return &Service{
-		repo: repo,
+		repo:            repo,
+		providerFactory: git.NewProvider,
 	}
 }
+
+func (s *Service) SetProviderFactory(f providerFactory) { s.providerFactory = f }
 
 func (s *Service) SetWebhookService(ws *WebhookService) {
 	s.webhookService = ws

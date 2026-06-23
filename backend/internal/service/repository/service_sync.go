@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/anthropics/agentsmesh/backend/internal/domain/gitprovider"
@@ -49,7 +50,7 @@ func (s *Service) ListBranches(ctx context.Context, repoID int64, accessToken st
 		return nil, err
 	}
 
-	client, err := git.NewProvider(repo.ProviderType, repo.ProviderBaseURL, accessToken)
+	client, err := s.providerFactory(repo.ProviderType, repo.ProviderBaseURL, accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +61,47 @@ func (s *Service) ListBranches(ctx context.Context, repoID int64, accessToken st
 	}
 
 	var names []string
+	for _, b := range branches {
+		names = append(names, b.Name)
+	}
+	return names, nil
+}
+
+func (s *Service) ListBranchesForUser(ctx context.Context, repoID, userID int64, explicitToken string) ([]string, error) {
+	repo, err := s.GetByID(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+
+	token := explicitToken
+	if token == "" {
+		if s.webhookService == nil {
+			return nil, ErrNoGitCredential
+		}
+		token, err = s.webhookService.ResolveAccessToken(ctx, repo, userID)
+		if err != nil || token == "" {
+			return nil, ErrNoGitCredential
+		}
+	}
+
+	client, err := s.providerFactory(repo.ProviderType, repo.ProviderBaseURL, token)
+	if err != nil {
+		if errors.Is(err, git.ErrProviderNotSupported) {
+			return nil, ErrNoGitCredential
+		}
+		slog.ErrorContext(ctx, "provider construction failed", "repoID", repoID, "err", err)
+		return nil, ErrListBranchesProvider
+	}
+
+	branches, err := client.ListBranches(ctx, repo.ExternalID)
+	if err != nil {
+		// X4: Gitee embeds access_token in URL query; transport errors carry it verbatim.
+		// Log raw error server-side only; return a fixed sentinel with no URL/query.
+		slog.ErrorContext(ctx, "list branches from provider failed", "repoID", repoID, "err", err)
+		return nil, ErrListBranchesProvider
+	}
+
+	names := make([]string, 0, len(branches))
 	for _, b := range branches {
 		names = append(names, b.Name)
 	}

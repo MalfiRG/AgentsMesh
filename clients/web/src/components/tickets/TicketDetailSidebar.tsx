@@ -6,7 +6,7 @@ import { useCurrentOrg } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 import { GitPullRequest, Clock, Terminal } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useTicketPods } from "@/hooks/useTicketPods";
+import { useTicketPods, invalidateTicketPods } from "@/hooks/useTicketPods";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { getShortPodKey } from "@/lib/pod-display-name";
 import { AgentStatusBadge } from "@/components/shared/AgentStatusBadge";
@@ -60,6 +60,7 @@ export function TicketDetailSidebar({
         <SpawnPodButton
           ticket={ticket}
           ticketSlug={ticketSlug}
+          onPodCreated={() => invalidateTicketPods(ticketSlug)}
           size="lg"
           className="h-11 w-full gap-2 text-sm font-semibold shadow-sm"
         />
@@ -68,7 +69,7 @@ export function TicketDetailSidebar({
         </p>
       </div>
 
-      <RailSection title={t("tickets.rail.workingPods")} count={activePods.length}>
+      <RailSection title={t("tickets.rail.workingPods")} count={activePods.length} data-testid="working-pods-rail">
         {podsLoading ? (
           <RailEmpty icon={<Terminal className="h-4 w-4" />} text={t("common.loading")} />
         ) : activePods.length === 0 ? (

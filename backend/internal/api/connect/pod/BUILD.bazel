@@ -52,14 +52,17 @@ go_test(
     embed = [":pod"],
     deps = [
         "//backend/internal/domain/agentpod",
+        "//backend/internal/infra/eventbus",
         "//backend/internal/middleware",
         "//backend/internal/service/agentpod",
         "//backend/internal/service/billing",
         "//backend/internal/service/runner",
+        "//proto/events/v1:events_go_proto",
         "//proto/pod/v1:pod_go_proto",
         "@com_connectrpc_connect//:connect",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@org_golang_google_protobuf//encoding/protojson",
     ],
 )
 

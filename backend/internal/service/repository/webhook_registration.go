@@ -137,36 +137,33 @@ func (s *WebhookService) buildWebhookURL(orgSlug string, repo *gitprovider.Repos
 	)
 }
 
+func (s *WebhookService) ResolveAccessToken(ctx context.Context, repo *gitprovider.Repository, userID int64) (string, error) {
+	if s.userService == nil {
+		return "", ErrNoAccessToken
+	}
+	if tok, err := s.userService.GetDecryptedProviderTokenByTypeAndURL(ctx, userID, repo.ProviderType, repo.ProviderBaseURL); err == nil && tok != "" {
+		return tok, nil
+	}
+	tokens, err := s.userService.GetDecryptedTokens(ctx, userID, repo.ProviderType)
+	if err != nil || tokens.AccessToken == "" {
+		return "", ErrNoAccessToken
+	}
+	return tokens.AccessToken, nil
+}
+
 func (s *WebhookService) getGitProviderForUser(ctx context.Context, repo *gitprovider.Repository, userID int64) (git.Provider, error) {
 	if s.userService == nil {
 		return nil, fmt.Errorf("%w: user service not configured", ErrNoAccessToken)
 	}
 
-	var accessToken string
-	var err error
-
-	accessToken, err = s.userService.GetDecryptedProviderTokenByTypeAndURL(ctx, userID, repo.ProviderType, repo.ProviderBaseURL)
-	if err == nil && accessToken != "" {
-		provider, err := git.NewProvider(repo.ProviderType, repo.ProviderBaseURL, accessToken)
-		if err != nil {
-			return nil, err
-		}
-		return provider, nil
-	}
-
-	tokens, err := s.userService.GetDecryptedTokens(ctx, userID, repo.ProviderType)
+	accessToken, err := s.ResolveAccessToken(ctx, repo, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNoAccessToken, err)
 	}
 
-	if tokens.AccessToken == "" {
-		return nil, ErrNoAccessToken
-	}
-
-	provider, err := git.NewProvider(repo.ProviderType, repo.ProviderBaseURL, tokens.AccessToken)
+	provider, err := git.NewProvider(repo.ProviderType, repo.ProviderBaseURL, accessToken)
 	if err != nil {
 		return nil, err
 	}
-
 	return provider, nil
 }

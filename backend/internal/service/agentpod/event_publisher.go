@@ -56,14 +56,22 @@ func (p *EventBusPublisher) PublishPodEvent(ctx context.Context, eventType PodEv
 		return
 	}
 
-	data := &eventsv1.PodStatusChangedEventData{
-		PodKey:         podKey,
-		Status:         status,
-		PreviousStatus: previousStatus,
-		AgentStatus:    agentStatus,
+	var event *eventbus.Event
+	var err error
+	if et == eventbus.EventPodCreated {
+		event, err = eventbus.NewEntityEvent(et, orgID, "pod", podKey, &eventsv1.PodCreatedEventData{
+			PodKey:      podKey,
+			Status:      status,
+			AgentStatus: agentStatus,
+		})
+	} else {
+		event, err = eventbus.NewEntityEvent(et, orgID, "pod", podKey, &eventsv1.PodStatusChangedEventData{
+			PodKey:         podKey,
+			Status:         status,
+			PreviousStatus: previousStatus,
+			AgentStatus:    agentStatus,
+		})
 	}
-
-	event, err := eventbus.NewEntityEvent(et, orgID, "pod", podKey, data)
 	if err != nil {
 		p.logger.Error("failed to create pod event",
 			"error", err,

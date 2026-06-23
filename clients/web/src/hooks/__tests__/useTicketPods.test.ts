@@ -111,4 +111,19 @@ describe("useTicketPods", () => {
     expect(result.current.pods).toEqual([]);
     expect(getTicketPodsMock).not.toHaveBeenCalled();
   });
+
+  it("invalidateTicketPods refetches for a slug with active listeners", async () => {
+    seed("AM-1", [{ pod_key: "p1" }]);
+    const { result } = renderHook(() => useTicketPods("AM-1"));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    getTicketPodsMock.mockClear();
+    act(() => invalidateTicketPods("AM-1"));
+    await waitFor(() => expect(getTicketPodsMock).toHaveBeenCalledWith("AM-1", true));
+  });
+
+  it("invalidateTicketPods with no active listeners does not fetch", () => {
+    getTicketPodsMock.mockClear();
+    act(() => invalidateTicketPods("AM-unwatched"));
+    expect(getTicketPodsMock).not.toHaveBeenCalled();
+  });
 });

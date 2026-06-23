@@ -109,7 +109,11 @@ export function useTicketPods(ticketSlug: string | null): UseTicketPodsResult {
 
 export function invalidateTicketPods(ticketSlug: string): void {
   inflight.delete(ticketSlug);
-  notify(ticketSlug);
+  if (listeners.has(ticketSlug)) {
+    void fetchTicketPods(ticketSlug).catch(() => undefined);
+  } else {
+    notify(ticketSlug);
+  }
 }
 
 export function __resetTicketPodsCacheForTests(): void {
