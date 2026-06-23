@@ -48,10 +48,18 @@ describe("BranchCombobox", () => {
   });
 
   test("filters list as user types", () => {
-    render(<BranchCombobox repoId={1} value="dev" onChange={() => {}} t={t} />);
+    render(<BranchCombobox repoId={1} value="" onChange={() => {}} t={t} />);
     fireEvent.focus(screen.getByRole("combobox"));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "dev" } });
     expect(screen.getByText("develop")).toBeInTheDocument();
     expect(screen.queryByText("main")).not.toBeInTheDocument();
+  });
+
+  test("opening with a prefilled value shows the full list, not just matches", () => {
+    render(<BranchCombobox repoId={1} value="main" onChange={() => {}} t={t} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(screen.getByText("main")).toBeInTheDocument();
+    expect(screen.getByText("develop")).toBeInTheDocument();
   });
 
   test("falls back to plain text input when hook signals error", () => {

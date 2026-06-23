@@ -16,6 +16,7 @@ interface BranchComboboxProps {
 export function BranchCombobox({ repoId, value, onChange, error, t }: BranchComboboxProps) {
   const { branches, loading, fallbackToFreeText, load } = useRepositoryBranches(repoId);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState<string | null>(null);
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -23,11 +24,18 @@ export function BranchCombobox({ repoId, value, onChange, error, t }: BranchComb
     return <BranchInput value={value} onChange={onChange} error={error} t={t} />;
   }
 
-  const filtered = value
-    ? branches.filter((b) => b.toLowerCase().includes(value.toLowerCase()))
-    : branches;
+  const filtered =
+    query === null
+      ? branches
+      : branches.filter((b) => b.toLowerCase().includes(query.toLowerCase()));
+
+  function handleType(next: string) {
+    setQuery(next);
+    onChange(next);
+  }
 
   function openList() {
+    setQuery(null);
     load();
     setOpen(true);
   }
@@ -40,6 +48,7 @@ export function BranchCombobox({ repoId, value, onChange, error, t }: BranchComb
 
   function selectBranch(branch: string) {
     onChange(branch);
+    setQuery(null);
     setOpen(false);
     inputRef.current?.focus();
   }
@@ -77,7 +86,7 @@ export function BranchCombobox({ repoId, value, onChange, error, t }: BranchComb
           }`}
           placeholder={t("ide.createPod.branchPlaceholder")}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => handleType(e.target.value)}
           onFocus={openList}
         />
         <button
