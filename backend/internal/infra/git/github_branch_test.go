@@ -228,3 +228,67 @@ func TestGitHubListBranches_Cases(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubListBranches_NumericID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("numeric external id resolves to owner/repo", func(t *testing.T) {
+		var resolvePath, branchPath bool
+		server, provider := setupGitHubMockServer(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repositories/1136843665":
+				resolvePath = true
+				json.NewEncoder(w).Encode(map[string]interface{}{"full_name": "MalfiRG/ScoutQL"})
+			case "/repos/MalfiRG/ScoutQL/branches":
+				branchPath = true
+				json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"name": "main", "commit": map[string]interface{}{"sha": "abc"}, "protected": true},
+				})
+			case "/repos/MalfiRG/ScoutQL":
+				json.NewEncoder(w).Encode(map[string]interface{}{"default_branch": "main"})
+			default:
+				t.Errorf("unexpected path %s (numeric id must not reach /repos/{id})", r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+		defer server.Close()
+
+		branches, err := provider.ListBranches(ctx, "1136843665")
+		if err != nil {
+			t.Fatalf("ListBranches failed: %v", err)
+		}
+		if !resolvePath {
+			t.Error("expected /repositories/{id} resolution call")
+		}
+		if !branchPath {
+			t.Error("expected /repos/{full_name}/branches call")
+		}
+		if len(branches) != 1 || branches[0].Name != "main" {
+			t.Errorf("branches = %+v, want [main]", branches)
+		}
+	})
+
+	t.Run("qualified owner/repo skips resolution", func(t *testing.T) {
+		server, provider := setupGitHubMockServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/repositories/") {
+				t.Errorf("owner/repo must not trigger numeric resolution, got %s", r.URL.Path)
+			}
+			if r.URL.Path == "/repos/owner/repo/branches" {
+				json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"name": "dev", "commit": map[string]interface{}{"sha": "x"}},
+				})
+			} else if r.URL.Path == "/repos/owner/repo" {
+				json.NewEncoder(w).Encode(map[string]interface{}{"default_branch": "dev"})
+			}
+		})
+		defer server.Close()
+
+		branches, err := provider.ListBranches(ctx, "owner/repo")
+		if err != nil {
+			t.Fatalf("ListBranches failed: %v", err)
+		}
+		if len(branches) != 1 || branches[0].Name != "dev" {
+			t.Errorf("branches = %+v, want [dev]", branches)
+		}
+	})
+}

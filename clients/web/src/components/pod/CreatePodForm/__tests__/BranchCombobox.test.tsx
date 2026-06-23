@@ -80,4 +80,28 @@ describe("BranchCombobox", () => {
     expect(screen.getByText("feat/unicode-日本語")).toBeInTheDocument();
     expect(screen.getByText("fix/special_chars-and.dots")).toBeInTheDocument();
   });
+
+  test("chevron toggle button opens the list and calls load()", () => {
+    render(<BranchCombobox repoId={1} value="" onChange={() => {}} t={t} />);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ide.createPod.branchToggle" }));
+    expect(hook.load).toHaveBeenCalled();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  test("while loading, no list and no empty state are shown", () => {
+    hook.loading = true;
+    hook.branches = [];
+    render(<BranchCombobox repoId={1} value="" onChange={() => {}} t={t} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("ide.createPod.branchEmpty")).not.toBeInTheDocument();
+  });
+
+  test("shows empty state when fetch returns no branches", () => {
+    hook.branches = [];
+    render(<BranchCombobox repoId={1} value="" onChange={() => {}} t={t} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(screen.getByText("ide.createPod.branchEmpty")).toBeInTheDocument();
+  });
 });
