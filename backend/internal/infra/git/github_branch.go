@@ -9,7 +9,12 @@ import (
 )
 
 func (p *GitHubProvider) ListBranches(ctx context.Context, projectID string) ([]*Branch, error) {
-	resp, err := p.doRequest(ctx, "GET", fmt.Sprintf("/repos/%s/branches", projectID), nil)
+	path, err := p.canonicalProjectPath(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.doRequest(ctx, "GET", fmt.Sprintf("/repos/%s/branches", path), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +32,7 @@ func (p *GitHubProvider) ListBranches(ctx context.Context, projectID string) ([]
 		return nil, err
 	}
 
-	project, _ := p.GetProject(ctx, projectID)
+	project, _ := p.GetProject(ctx, path)
 	defaultBranch := ""
 	if project != nil {
 		defaultBranch = project.DefaultBranch

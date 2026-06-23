@@ -19,6 +19,7 @@ go_library(
         "github_file.go",
         "github_job.go",
         "github_mr.go",
+        "github_path.go",
         "github_pipeline.go",
         "github_project.go",
         "github_user.go",
