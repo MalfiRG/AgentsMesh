@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Rev 1 - awaiting adversarial and cross-model review.
+**Status:** Rev 3 - post-adversarial-and-cross-model review; ready for implementation approval.
+
+**Review:** 3-agent round 1 found 4 blockers, 7 non-blocking fixes, and 3 optional/deferred items; Rev 2 applied those fixes. 3-agent round 2 found 3 targeted blockers; Rev 3 applies parser-helper, scan-shell, and daemon-argv-redaction fixes. 3-agent round 3 and headless Sonnet cross-model review passed with no blockers.
 
 **Goal:** Build a non-live, opt-in AgentsMesh path that can launch lean Pi through an AgentFile layer, with parser, runner, containment, and validation seams proven before any live pod is created.
 
@@ -59,7 +61,7 @@
 - Modify: `runner/internal/agents/pi/testsupport/fixture.go`
   - Add helper(s) to plant fixture JSONL under either session root.
 - Modify: `runner/internal/agents/pi/parser_test.go`
-  - Add tests for lean-home sessions, dual roots, symlink escape rejection, non-regular file rejection, and scan limits.
+  - Add tests for lean-home sessions, dual roots, symlink escape rejection, non-regular file rejection, max visited entries, max depth, max file count, max single-file size, and max total bytes.
 - Modify: `runner/internal/tokenusage/parser_agents_test.go`
   - Import the Pi package for parser registration and add actual launch key cases.
 - Modify: `runner/internal/tokenusage/parser_contract_test.go`
@@ -76,7 +78,7 @@
 - Create: `runner/internal/runner/pod_builder_launch_plan_test.go`
   - Assert lean wrapper args and prompt delimiter ordering without starting a real Pi pod.
 - Create: `runner/internal/runner/agent_home_containment.go`
-  - Validate copied agent home paths after copy or mkdir.
+  - Validate the resolved agent home before copy, mkdir, merge, or cleanup, then validate the created tree after copy or mkdir.
 - Modify: `runner/internal/runner/pod_builder_agent_home.go`
   - Call containment validation after creating or copying an agent home.
 - Modify: `runner/internal/runner/pod_builder_agent_home_test.go`
@@ -91,7 +93,7 @@
 - Create: `tools/pi-lean/inspect-pod-daemon-redacted.sh`
   - Reads a sandbox path and prints only redacted daemon state fields.
 - Create: `tools/pi-lean/BUILD.bazel`
-  - Add `sh_test` targets for `bash -n` and fixture checks if repository shell rules are available; otherwise document direct `bash -n` commands in the plan verification step.
+  - Add concrete `sh_test` syntax targets for `preflight.sh` and `inspect-pod-daemon-redacted.sh`.
 
 ---
 
@@ -150,6 +152,8 @@ Required final runner args when the prompt begins with a flag-like token:
 **Interfaces:**
 - Consumes: existing `merge.Merge(base, slice)` behavior.
 - Produces: `REMOVE arg` removes matching base `arg` statements before layer args are appended, and serialized merged output does not contain consumed `REMOVE arg` declarations.
+
+**Compatibility note:** In this plan, `REMOVE arg` is a merge-time base-statement replacement mechanism. It matches base `arg` statements by first string literal only. The lean layer uses it only for `--provider` and `--model`, which are first literals in the existing `pi-cli` base AgentFile. The Task 1 tests must pin that limited scope so later work does not treat `REMOVE arg` as a general argv substring remover.
 
 - [ ] **Step 1: Write the failing merge test**
 
@@ -576,107 +580,69 @@ git commit -m "test(agent): pin lean pi agentfile contract"
 
 **Interfaces:**
 - Consumes: existing Pi JSONL fixture and `tokenusage.Collect(agent, sandboxPath, startedAt)`.
-- Produces: token collection succeeds for actual lean launch keys and sees both `pi-home/sessions` and `pi-lean-home/sessions` without following unsafe paths.
+- Produces: token collection succeeds for actual lean launch keys and sees both `pi-home/sessions` and `pi-lean-home/sessions` while refusing unsafe paths and enforcing visited-entry, accepted-file, depth, single-file byte, and total-byte budgets.
 
-- [ ] **Step 1: Write parser tests for lean session roots and unsafe paths**
+- [ ] **Step 1: Write parser tests for lean session roots, symlink escapes, and real scan limits**
 
-Extend `runner/internal/agents/pi/testsupport/fixture.go` with a root-specific helper:
+Extend `runner/internal/agents/pi/testsupport/fixture.go` with root-specific and path-specific helpers:
 
 ```go
 func BuildFixtureSandboxWithRoots(t *testing.T, roots ...string) string {
-	t.Helper()
-	sandbox := t.TempDir()
-	for _, root := range roots {
-		dir := filepath.Join(sandbox, root, "sessions", "--fixture--")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("pi fixture: mkdir %s: %v", root, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), fixtureSession, 0o644); err != nil {
-			t.Fatalf("pi fixture: write %s: %v", root, err)
-		}
-	}
-	return sandbox
+    t.Helper()
+    sandbox := t.TempDir()
+    for _, root := range roots {
+        WriteFixtureSessionFile(t, filepath.Join(sandbox, root, "sessions", "--fixture--", "session.jsonl"))
+    }
+    return sandbox
 }
-```
 
-Change existing `BuildFixtureSandbox` to call it:
-
-```go
 func BuildFixtureSandbox(t *testing.T) string {
-	t.Helper()
-	return BuildFixtureSandboxWithRoots(t, "pi-home")
+    t.Helper()
+    return BuildFixtureSandboxWithRoots(t, "pi-home")
+}
+
+func WriteFixtureSessionFile(t *testing.T, path string) {
+    t.Helper()
+    require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+    require.NoError(t, os.WriteFile(path, fixtureSession, 0o644))
 }
 ```
 
-Add tests to `runner/internal/agents/pi/parser_test.go`:
+Add these concrete tests to `runner/internal/agents/pi/parser_test.go`:
 
-```go
-func TestPiParser_ScansLeanHomeSessions(t *testing.T) {
-	sandbox := testsupport.BuildFixtureSandboxWithRoots(t, "pi-lean-home")
-
-	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
-	require.NoError(t, err)
-	require.NotNil(t, usage)
-	assert.NotNil(t, usage.Models["gpt-5.5"])
-}
-
-func TestPiParser_ScansPiHomeAndLeanHomeSessions(t *testing.T) {
-	sandbox := testsupport.BuildFixtureSandboxWithRoots(t, "pi-home", "pi-lean-home")
-
-	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
-	require.NoError(t, err)
-	require.NotNil(t, usage)
-
-	m := usage.Models["gpt-5.5"]
-	require.NotNil(t, m)
-	assert.Equal(t, int64(2*(17341+2048)), m.InputTokens)
-	assert.Equal(t, int64(2*(177+512)), m.OutputTokens)
-}
-
-func TestPiParser_RejectsSessionSymlinkEscape(t *testing.T) {
-	sandbox := t.TempDir()
-	outside := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(outside, "sessions"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(sandbox, "pi-lean-home"), 0o755))
-	require.NoError(t, os.Symlink(filepath.Join(outside, "sessions"), filepath.Join(sandbox, "pi-lean-home", "sessions")))
-
-	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
-	require.NoError(t, err)
-	assert.Nil(t, usage)
-}
-
-func TestPiParser_SkipsNonRegularSessionFile(t *testing.T) {
-	sandbox := t.TempDir()
-	dir := filepath.Join(sandbox, "pi-lean-home", "sessions", "--fixture--")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "not-a-file.jsonl"), 0o755))
-
-	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
-	require.NoError(t, err)
-	assert.Nil(t, usage)
-}
-```
+- `TestPiParser_ScansLeanHomeSessions`: plant only `pi-lean-home/sessions` and assert `gpt-5.5` usage is present.
+- `TestPiParser_ScansPiHomeAndLeanHomeSessions`: plant both roots and assert doubled token totals.
+- `TestPiParser_RejectsPiHomeSessionFileSymlinkEscape`: plant `<outside>/session.jsonl` with valid Pi JSONL, symlink `<sandbox>/pi-home/sessions/--fixture--/escaped.jsonl` to it, and assert nil usage. This fails before the fix because current code opens the outside tokens.
+- `TestPiParser_SkipsNonRegularSessionFile`: create a directory named `not-a-file.jsonl` and assert nil usage.
+- `TestPiParser_EnforcesMaxAcceptedSessionFileCount`: plant `maxSessionFiles+1` valid JSONL files and assert only `maxSessionFiles` are accepted.
+- `TestPiParser_EnforcesMaxSingleSessionFileBytes`: write one JSONL file with `maxSessionFileBytes+1` bytes and assert nil usage.
+- `TestPiParser_EnforcesMaxTotalSessionBytes`: write enough session files to exceed `maxSessionTotalBytes` and assert the parser stops before over-budget parsing.
+- `TestPiParser_EnforcesMaxVisitedWalkEntriesIncludingNonJSONL`: create `maxSessionEntries+1` non-jsonl files with lexically early names such as `000000-filler.txt`, then create the valid JSONL as `zzzz-session.jsonl`; assert the valid file is not parsed. The naming makes `filepath.WalkDir` consume the visited-entry budget before it reaches the valid JSONL file.
+- `TestPiParser_EnforcesMaxRelativeDepthUnderSessions`: plant a valid file deeper than `maxSessionDepth` under `sessions` and assert nil usage.
+- `TestPiParser_SkipsSymlinkedDirectoriesBeforeSuffixFiltering`: symlink a directory named `linked-dir.jsonl` to an outside fixture dir and assert nil usage.
 
 Add imports if missing:
 
 ```go
 import (
-	"os"
-	"path/filepath"
-	"testing"
-	"time"
+    "bytes"
+    "fmt"
+    "os"
+    "path/filepath"
+    "testing"
+    "time"
 )
 ```
 
-- [ ] **Step 2: Run parser tests and verify lean-root tests fail before implementation**
+- [ ] **Step 2: Run parser tests and verify safety cases fail before implementation**
 
 Run:
 
 ```bash
-bazel test //runner/internal/agents/pi:pi_test --test_filter='TestPiParser_(ScansLeanHomeSessions|ScansPiHomeAndLeanHomeSessions|RejectsSessionSymlinkEscape|SkipsNonRegularSessionFile)'
+bazel test //runner/internal/agents/pi:pi_test --test_filter='TestPiParser_(ScansLeanHomeSessions|ScansPiHomeAndLeanHomeSessions|RejectsPiHomeSessionFileSymlinkEscape|SkipsNonRegularSessionFile|EnforcesMaxAcceptedSessionFileCount|EnforcesMaxSingleSessionFileBytes|EnforcesMaxTotalSessionBytes|EnforcesMaxVisitedWalkEntriesIncludingNonJSONL|EnforcesMaxRelativeDepthUnderSessions|SkipsSymlinkedDirectoriesBeforeSuffixFiltering)'
 ```
 
-Expected before implementation: lean-root tests FAIL or return nil because only `pi-home/sessions` is scanned.
+Expected before implementation: lean-root tests fail or return nil because only `pi-home/sessions` is scanned; the pi-home symlink file test fails because current code opens the outside valid JSONL file through `<sandbox>/pi-home/sessions/--fixture--/escaped.jsonl`.
 
 - [ ] **Step 3: Implement dual-root parser scanning with limits**
 
@@ -690,83 +656,74 @@ In `runner/internal/agents/pi/parser.go`, add constants:
 
 ```go
 const (
-	maxSessionFiles      = 1000
-	maxSessionFileBytes  = 10 << 20
-	maxSessionTotalBytes = 50 << 20
+    maxSessionFiles      = 1000
+    maxSessionFileBytes  = 10 << 20
+    maxSessionTotalBytes = 50 << 20
+    maxSessionEntries    = 5000
+    maxSessionDepth      = 8
 )
 ```
 
-Replace the single `sessionsDir` block in `Parse` with:
-
-```go
-roots := []string{"pi-home", "pi-lean-home"}
-var scanned piScanBudget
-for _, root := range roots {
-	sessionsDir := filepath.Join(sandboxPath, root, "sessions")
-	if err := p.parseSessionsDir(sandboxPath, sessionsDir, podStartedAt, usage, &scanned); err != nil {
-		logger.Pod().Warn("Pi parser: walk error", "dir", sessionsDir, "error", err)
-	}
-}
-```
+Replace the single `sessionsDir` block in `Parse` with a loop over `[]string{"pi-home", "pi-lean-home"}` and pass a shared `piScanBudget` across roots.
 
 Add helper types and methods below `Parse`:
 
 ```go
 type piScanBudget struct {
-	files int
-	bytes int64
+    visitedEntries int
+    acceptedFiles  int
+    totalBytes     int64
+    maxDepth       int
 }
 
 func (p *piParser) parseSessionsDir(sandboxPath, sessionsDir string, podStartedAt time.Time, usage *tokenusage.TokenUsage, budget *piScanBudget) error {
-	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
-		return nil
-	}
-	if !pathContained(sandboxPath, sessionsDir) {
-		return nil
-	}
-
-	return filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 || !pathContained(sandboxPath, path) {
-			return nil
-		}
-		info, statErr := d.Info()
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() > maxSessionFileBytes {
-			return nil
-		}
-		if budget.files >= maxSessionFiles || budget.bytes+info.Size() > maxSessionTotalBytes {
-			return filepath.SkipAll
-		}
-		budget.files++
-		budget.bytes += info.Size()
-		if !tokenusage.IsModifiedAfter(path, podStartedAt) {
-			return nil
-		}
-		if perr := parsePiSessionFile(path, usage); perr != nil {
-			logger.Pod().Warn("Pi parser: file parse error", "file", path, "error", perr)
-		}
-		return nil
-	})
+    if _, err := os.Stat(sessionsDir); os.IsNotExist(err) { return nil }
+    if !pathContained(sandboxPath, sessionsDir) { return nil }
+    return filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
+        if err != nil { return nil }
+        budget.visitedEntries++
+        if budget.visitedEntries > maxSessionEntries { return filepath.SkipAll }
+        if d.Type()&fs.ModeSymlink != 0 { return nil }
+        depth, ok := relativeDepth(sessionsDir, path)
+        if !ok || depth > maxSessionDepth {
+            if d.IsDir() { return filepath.SkipDir }
+            return nil
+        }
+        if depth > budget.maxDepth { budget.maxDepth = depth }
+        if d.IsDir() || !strings.HasSuffix(path, ".jsonl") { return nil }
+        if !pathContained(sandboxPath, path) { return nil }
+        info, statErr := d.Info()
+        if statErr != nil || !info.Mode().IsRegular() || info.Size() > maxSessionFileBytes { return nil }
+        if budget.acceptedFiles >= maxSessionFiles || budget.totalBytes+info.Size() > maxSessionTotalBytes { return filepath.SkipAll }
+        budget.acceptedFiles++
+        budget.totalBytes += info.Size()
+        if !tokenusage.IsModifiedAfter(path, podStartedAt) { return nil }
+        if perr := parsePiSessionFile(path, usage); perr != nil { logger.Pod().Warn("Pi parser: file parse error", "file", path, "error", perr) }
+        return nil
+    })
 }
 
 func pathContained(root, path string) bool {
-	rootReal, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return false
-	}
-	pathReal, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(rootReal, pathReal)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+    rootReal, err := filepath.EvalSymlinks(root)
+    if err != nil { return false }
+    pathReal, err := filepath.EvalSymlinks(path)
+    if err != nil { return false }
+    rel, err := filepath.Rel(rootReal, pathReal)
+    if err != nil { return false }
+    return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func relativeDepth(root, path string) (int, bool) {
+    rel, err := filepath.Rel(root, path)
+    if err != nil { return 0, false }
+    rel = filepath.Clean(rel)
+    if rel == "." { return 0, true }
+    if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) { return 0, false }
+    return len(strings.Split(rel, string(filepath.Separator))), true
 }
 ```
+
+Helper contracts: `pathContained` fails closed if either path cannot be resolved and only returns true when the resolved path is inside the resolved sandbox root. `relativeDepth` counts path components relative to the `sessions` root; the root itself is depth 0, `sessions/--fixture--/session.jsonl` is depth 2, and paths outside the root return `ok=false`. The visited-entry budget increments before `.jsonl` suffix filtering. Symlink files and symlink directories are rejected before parsing; `filepath.WalkDir` does not descend symlink directories, so do not return `filepath.SkipDir` for a symlink file entry. Keep the dual-root scan for both `pi-home/sessions` and `pi-lean-home/sessions`.
 
 - [ ] **Step 4: Add tokenusage launch-key coverage**
 
@@ -786,32 +743,7 @@ Add cases to `TestGetParser`:
 {"/home/malfirg/programming_projects/pi-config/bin/pi-pod-lean", false},
 ```
 
-Add a collect test:
-
-```go
-func TestCollect_PiLeanActualLaunchCommand(t *testing.T) {
-	sandbox := pifixture.BuildFixtureSandboxWithRoots(t, "pi-lean-home")
-	usage := tokenusage.Collect("/home/malfirg/programming_projects/pi-config/bin/pi-pod-lean", sandbox, epoch)
-	require.NotNil(t, usage)
-	assert.NotNil(t, usage.Models["gpt-5.5"])
-}
-```
-
-Update imports in `parser_agents_test.go`:
-
-```go
-pifixture "github.com/anthropics/agentsmesh/runner/internal/agents/pi/testsupport"
-```
-
-In `runner/internal/tokenusage/parser_contract_test.go`, add the same blank Pi import if not already present in that package's test files after Step 4. This keeps registry coverage deterministic if tests are filtered by file or package setup changes later.
-
-In `runner/internal/tokenusage/BUILD.bazel`, add:
-
-```python
-"//runner/internal/agents/pi",
-```
-
-inside `tokenusage_test` deps.
+Add `TestCollect_PiLeanActualLaunchCommand` using `BuildFixtureSandboxWithRoots(t, "pi-lean-home")` and absolute wrapper launch command. In `runner/internal/tokenusage/parser_contract_test.go`, add the same blank Pi import if not already present. In `runner/internal/tokenusage/BUILD.bazel`, add `"//runner/internal/agents/pi"` inside `tokenusage_test` deps.
 
 - [ ] **Step 5: Run Task 3 tests**
 
@@ -846,239 +778,48 @@ git commit -m "feat(pi): collect lean pod token usage safely"
 
 **Interfaces:**
 - Consumes: `CreatePodCommand` from backend eval and existing `PodBuilder` setup.
-- Produces: pure tests for final args/env and containment checks before any terminal starts.
+- Produces: pure tests for final args/env and containment checks before any terminal starts. Agent-home target containment runs before any copy, mkdir, merge, cleanup, or log line that treats the target as trusted. Tree containment runs after copy or mkdir.
 
 - [ ] **Step 1: Write failing launch-plan tests**
 
-Create `runner/internal/runner/pod_builder_launch_plan_test.go`:
-
-```go
-package runner
-
-import (
-	"testing"
-
-	runnerv1 "github.com/anthropics/agentsmesh/proto/gen/go/runner/v1"
-	"github.com/anthropics/agentsmesh/runner/internal/config"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
-
-func TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter(t *testing.T) {
-	builder := NewPodBuilder(PodBuilderDeps{Config: &config.Config{WorkspaceRoot: t.TempDir()}}).WithCommand(&runnerv1.CreatePodCommand{
-		PodKey:        "pi-lean-launch",
-		LaunchCommand: "/opt/agentsmesh/bin/pi-pod-lean",
-		LaunchArgs: []string{
-			"--skill", "agentsmesh",
-			"--",
-			"--provider", "openai-codex",
-			"--model", "gpt-5.5",
-			"--",
-		},
-		Prompt:         "--skill should stay prompt text",
-		PromptPosition: "append",
-		EnvVars: map[string]string{
-			"PI_CODING_AGENT_DIR":       "{{sandbox_root}}/pi-home",
-			"PI_POD_LEAN_BASE_DIR":      "{{sandbox_root}}/pi-home",
-			"PI_POD_LEAN_PROFILE_DIR":   "{{sandbox_root}}/pi-lean-home",
-			"PI_POD_SKILLS":             "agentsmesh",
-		},
-	})
-
-	plan, err := builder.resolveLaunchInputs("/tmp/sandbox", "/tmp/sandbox/work")
-	require.NoError(t, err)
-	assert.Equal(t, "/opt/agentsmesh/bin/pi-pod-lean", plan.Command)
-	assert.Equal(t, []string{
-		"--skill", "agentsmesh",
-		"--",
-		"--provider", "openai-codex",
-		"--model", "gpt-5.5",
-		"--",
-		"--skill should stay prompt text",
-	}, plan.Args)
-	assert.Equal(t, "/tmp/sandbox/pi-home", plan.Env["PI_CODING_AGENT_DIR"])
-	assert.Equal(t, "/tmp/sandbox/pi-home", plan.Env["PI_POD_LEAN_BASE_DIR"])
-	assert.Equal(t, "/tmp/sandbox/pi-lean-home", plan.Env["PI_POD_LEAN_PROFILE_DIR"])
-}
-```
-
-This test should fail before implementation because `resolveLaunchInputs` does not exist.
+Create `runner/internal/runner/pod_builder_launch_plan_test.go` with `TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter`. Assert the wrapper command, final args `--skill agentsmesh -- --provider openai-codex --model gpt-5.5 -- --skill should stay prompt text`, and resolved `PI_CODING_AGENT_DIR`, `PI_POD_LEAN_BASE_DIR`, and `PI_POD_LEAN_PROFILE_DIR` paths.
 
 - [ ] **Step 2: Extract the launch-input helper**
 
-Create `runner/internal/runner/pod_builder_launch_plan.go`:
-
-```go
-package runner
-
-import "fmt"
-
-type launchInputs struct {
-	Command     string
-	Args        []string
-	Env         map[string]string
-	CapturedEnv []string
-}
-
-func (b *PodBuilder) resolveLaunchInputs(sandboxRoot, workingDir string) (*launchInputs, error) {
-	if b.cmd == nil {
-		return nil, fmt.Errorf("command is required")
-	}
-	resolvedArgs := resolveStringSlice(b.cmd.LaunchArgs, sandboxRoot, workingDir)
-	envVars := b.mergeEnvVars(sandboxRoot)
-	for k, v := range b.cmd.EnvVars {
-		envVars[k] = resolvePathPlaceholders(v, sandboxRoot, workingDir)
-	}
-
-	if prompt := b.cmd.Prompt; prompt != "" {
-		switch b.cmd.PromptPosition {
-		case "prepend":
-			resolvedArgs = append([]string{prompt}, resolvedArgs...)
-		case "append":
-			resolvedArgs = append(resolvedArgs, prompt)
-		}
-	}
-
-	return &launchInputs{
-		Command:     b.cmd.LaunchCommand,
-		Args:        resolvedArgs,
-		Env:         envVars,
-		CapturedEnv: buildMergedEnv(envVars),
-	}, nil
-}
-```
-
-Modify `runner/internal/runner/pod_builder_build.go` after setup:
-
-```go
-launch, err := b.resolveLaunchInputs(sandboxRoot, workingDir)
-if err != nil {
-	return nil, err
-}
-if err := b.createFilesFromProto(b.cmd.FilesToCreate, sandboxRoot, workingDir); err != nil {
-	return nil, err
-}
-```
-
-Then replace downstream `resolvedArgs`, `envVars`, `capturedEnv`, and `launchCommand` uses with `launch.Args`, `launch.Env`, `launch.CapturedEnv`, and `launch.Command`. Keep traceparent injection after creating `launch`:
-
-```go
-injectTraceparent(ctx, launch.Env)
-if tp, ok := launch.Env["TRACEPARENT"]; ok {
-	launch.CapturedEnv = append(launch.CapturedEnv, "TRACEPARENT="+tp)
-}
-```
+Create `runner/internal/runner/pod_builder_launch_plan.go` with private `launchInputs` and `resolveLaunchInputs`. Move command, args, env, captured env, and prompt-position resolution out of `Build`. Keep traceparent injection after creating `launch`, and replace downstream uses with `launch.Command`, `launch.Args`, `launch.Env`, and `launch.CapturedEnv`.
 
 - [ ] **Step 3: Write failing containment tests**
 
 Add to `runner/internal/runner/pod_builder_agent_home_test.go`:
 
+- `TestPrepareAgentHomeRejectsEnvPathOutsideSandboxBeforeCreation`: set `PI_CODING_AGENT_DIR` to an outside temp path, call `prepareAgentHome`, assert an error containing `agent home target escapes sandbox`, and assert the outside path was not created.
+- `TestPrepareAgentHomeRejectsCopiedSymlinkEscape`: copy host `.pi/agent` containing a symlink to `/etc/passwd` and assert a containment error.
+- `TestPrepareAgentHomeAllowsContainedSymlink`: copy host `.pi/agent` containing a relative symlink to `settings.json` and assert success.
+
+Keep the copied symlink escape and contained symlink tests; add the outside env path test before creation.
+
+- [ ] **Step 4: Implement two-stage agent-home containment validation**
+
+Create `runner/internal/runner/agent_home_containment.go` with two validators:
+
+- `validateAgentHomeTarget(sandboxRoot, agentHome string) error` runs before any write. It verifies sandbox root realpath, absolute target path, lexical containment under sandbox, nearest existing parent realpath under sandbox, and every existing path component used by the target resolves under sandbox.
+- `validateAgentHomeContained(sandboxRoot, agentHome string) error` runs after copy or mkdir. It walks the created tree and rejects symlink escapes and paths outside sandbox.
+
+In `runner/internal/runner/pod_builder_agent_home.go`, call target validation immediately after resolving `agentHome`, before logging, `copyDirSelective`, `os.MkdirAll`, merge work, or cleanup:
+
 ```go
-func TestPrepareAgentHomeRejectsCopiedSymlinkEscape(t *testing.T) {
-	hostHome := t.TempDir()
-	t.Setenv("HOME", hostHome)
-	t.Setenv("USERPROFILE", hostHome)
-
-	source := filepath.Join(hostHome, ".pi", "agent")
-	require.NoError(t, os.MkdirAll(source, 0o755))
-	require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(source, "escaped")))
-
-	sandboxRoot := t.TempDir()
-	builder := &PodBuilder{cmd: &runnerv1.CreatePodCommand{
-		PodKey: "pi-home-escape",
-		EnvVars: map[string]string{
-			"PI_CODING_AGENT_DIR": filepath.Join(sandboxRoot, "pi-home"),
-		},
-	}}
-
-	err := builder.prepareAgentHome(sandboxRoot, filepath.Join(sandboxRoot, "work"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "agent home escapes sandbox")
-}
-
-func TestPrepareAgentHomeAllowsContainedSymlink(t *testing.T) {
-	hostHome := t.TempDir()
-	t.Setenv("HOME", hostHome)
-	t.Setenv("USERPROFILE", hostHome)
-
-	source := filepath.Join(hostHome, ".pi", "agent")
-	require.NoError(t, os.MkdirAll(filepath.Join(source, "skills", "agentsmesh"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(source, "settings.json"), []byte(`{}`), 0o644))
-	require.NoError(t, os.Symlink("settings.json", filepath.Join(source, "settings-link.json")))
-
-	sandboxRoot := t.TempDir()
-	builder := &PodBuilder{cmd: &runnerv1.CreatePodCommand{
-		PodKey: "pi-home-contained",
-		EnvVars: map[string]string{
-			"PI_CODING_AGENT_DIR": filepath.Join(sandboxRoot, "pi-home"),
-		},
-	}}
-
-	err := builder.prepareAgentHome(sandboxRoot, filepath.Join(sandboxRoot, "work"))
-	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(sandboxRoot, "pi-home", "settings.json"))
+agentHome = b.resolvePath(agentHome, sandboxRoot, workingDir)
+if err := validateAgentHomeTarget(sandboxRoot, agentHome); err != nil {
+    return err
 }
 ```
 
-- [ ] **Step 4: Implement agent-home containment validation**
-
-Create `runner/internal/runner/agent_home_containment.go`:
-
-```go
-package runner
-
-import (
-	"fmt"
-	"io/fs"
-	"path/filepath"
-	"strings"
-)
-
-func validateAgentHomeContained(sandboxRoot, agentHome string) error {
-	if !pathInside(sandboxRoot, agentHome) {
-		return fmt.Errorf("agent home escapes sandbox: %s", agentHome)
-	}
-	return filepath.WalkDir(agentHome, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !pathInside(sandboxRoot, path) {
-			return fmt.Errorf("agent home escapes sandbox: %s", path)
-		}
-		if d.Type()&fs.ModeSymlink != 0 && !pathInside(sandboxRoot, path) {
-			return fmt.Errorf("agent home symlink escapes sandbox: %s", path)
-		}
-		return nil
-	})
-}
-
-func pathInside(root, path string) bool {
-	rootReal, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return false
-	}
-	pathReal, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(rootReal, pathReal)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
-```
-
-In `runner/internal/runner/pod_builder_agent_home.go`, call the validator before returning:
+Only call `os.RemoveAll(agentHome)` after `validateAgentHomeTarget` has passed. After copy or mkdir, walk the created tree:
 
 ```go
 if err := validateAgentHomeContained(sandboxRoot, agentHome); err != nil {
-	_ = os.RemoveAll(agentHome)
-	return err
-}
-
-if spec.MergeConfig == nil {
-	return nil
+    _ = os.RemoveAll(agentHome)
+    return err
 }
 ```
 
@@ -1104,7 +845,7 @@ Add to `runner_test.srcs`:
 Run:
 
 ```bash
-bazel test //runner/internal/runner:runner_test --test_filter='TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter|TestPrepareAgentHome(RejectsCopiedSymlinkEscape|AllowsContainedSymlink)'
+bazel test //runner/internal/runner:runner_test --test_filter='TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter|TestPrepareAgentHome(RejectsEnvPathOutsideSandboxBeforeCreation|RejectsCopiedSymlinkEscape|AllowsContainedSymlink)'
 ```
 
 Expected: PASS.
@@ -1123,161 +864,139 @@ git commit -m "feat(runner): verify lean pi launch inputs safely"
 **Files:**
 - Create: `tools/pi-lean/preflight.sh`
 - Create: `tools/pi-lean/inspect-pod-daemon-redacted.sh`
-- Create: `tools/pi-lean/BUILD.bazel` if a local `sh_test` pattern is available; otherwise use direct `bash -n` checks.
+- Create: `tools/pi-lean/BUILD.bazel`
 
 **Interfaces:**
 - Consumes: `/home/malfirg/programming_projects/pi-config/bin/pi-pod-lean` and a local temp sandbox.
 - Produces: local-only wrapper preflight and safe daemon-state inspection tools. These helpers do not create pods and do not call the AgentsMesh API.
+- Validated facts: wrapper realpath, owner, group, mode, hash, dry-run command shape, temp sandbox containment, and any resolved `--skill <path>` values.
+- Operator-reviewed facts: approved wrapper install path, expected owner/group/mode values when local policy requires exact values, and `EXPECTED_WRAPPER_SHA256`. If the workstation wrapper or parent dirs are still mode `0770`, fix the permissions or set an explicit operator-approved override for that one run; do not silently pass group-writable paths.
 
 - [ ] **Step 1: Create the non-live wrapper preflight script**
 
-Create `tools/pi-lean/preflight.sh`:
+Create `tools/pi-lean/preflight.sh`. It must support `--syntax-only` by exiting 0 before touching the filesystem, and normal mode must:
+
+1. Create `PROFILE_DIR` before containment checks, or use `realpath -m` only for paths not yet created.
+2. Compute wrapper realpath and require it to equal `APPROVED_WRAPPER_PATH`, defaulting to `/home/malfirg/programming_projects/pi-config/bin/pi-pod-lean`.
+3. Reject wrapper symlink surprises unless the realpath equals the approved path.
+4. Check owner with `stat`, defaulting to `$(id -un)` unless `EXPECTED_WRAPPER_OWNER` is set.
+5. Check group with `stat`, defaulting to `$(id -gn)` unless `EXPECTED_WRAPPER_GROUP` is set.
+6. Check mode with `stat`; default rejects group/world writable wrapper and parent dirs. Check at least the wrapper's immediate parent and approved install root. If mode is still `0770`, fix permissions or use an explicit operator-approved override.
+7. Check `EXPECTED_WRAPPER_SHA256`. If unset, print the observed hash and fail with instructions to rerun with that expected hash or source it from a local env file.
+8. Run the wrapper dry-run in a temp sandbox and verify command shape without creating a pod.
+9. Parse dry-run output and verify every `--skill <path>` value resolves under the temp sandbox profile/base/home roots.
+10. Verify generated profile symlinks resolve under the temp sandbox.
+
+Use this skill-path containment helper inside the shell script:
 
 ```bash
-#!/bin/bash
-set -euo pipefail
+verify_skill_paths() {
+    local output="$1"
+    DRY_RUN_OUTPUT="${output}" python3 - "${BASE_DIR}" "${PROFILE_DIR}" "${HOME_DIR}" <<'PY'
+import os
+import shlex
+import sys
+from pathlib import Path
 
-log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO:  $*"; }
-log_warn()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN:  $*" >&2; }
-log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2; }
-
-cleanup() {
-    local exit_code=$?
-    [[ ${exit_code} -ne 0 ]] && log_error "Failed with exit code ${exit_code}"
-    [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR}" ]] && rm -rf "${TMP_DIR}"
+roots = [Path(arg).resolve() for arg in sys.argv[1:]]
+args = shlex.split(os.environ["DRY_RUN_OUTPUT"])
+for index, value in enumerate(args[:-1]):
+    if value != "--skill":
+        continue
+    candidate = args[index + 1]
+    if "/" not in candidate and not candidate.endswith(".md"):
+        continue
+    real = Path(candidate).resolve()
+    if not any(real == root or root in real.parents for root in roots):
+        raise SystemExit(f"skill path escapes temp sandbox: {candidate} -> {real}")
+PY
 }
-trap 'cleanup' EXIT
-
-readonly DEFAULT_WRAPPER="/home/malfirg/programming_projects/pi-config/bin/pi-pod-lean"
-readonly WRAPPER_PATH="${1:-${DEFAULT_WRAPPER}}"
-readonly EXPECTED_SKILL="agentsmesh"
-TMP_DIR="$(mktemp -d)"
-readonly TMP_DIR
-readonly BASE_DIR="${TMP_DIR}/pi-home"
-readonly PROFILE_DIR="${TMP_DIR}/pi-lean-home"
-readonly HOME_DIR="${TMP_DIR}/home"
-
-require_file() {
-    local path="$1"
-    [[ -f "${path}" ]] || { log_error "missing file: ${path}"; exit 1; }
-}
-
-require_contained() {
-    local path="$1"
-    local real
-    real="$(realpath "${path}")"
-    case "${real}" in
-        "${TMP_DIR}"|"${TMP_DIR}"/*) return 0 ;;
-        *) log_error "path escapes temp sandbox: ${real}"; exit 1 ;;
-    esac
-}
-
-main() {
-    require_file "${WRAPPER_PATH}"
-    [[ -x "${WRAPPER_PATH}" ]] || { log_error "wrapper not executable: ${WRAPPER_PATH}"; exit 1; }
-
-    mkdir -p "${BASE_DIR}/skills/${EXPECTED_SKILL}" "${HOME_DIR}"
-    printf 'name: agentsmesh\n' > "${BASE_DIR}/skills/${EXPECTED_SKILL}/SKILL.md"
-    printf '{}\n' > "${BASE_DIR}/settings.json"
-
-    require_contained "${BASE_DIR}"
-    require_contained "${PROFILE_DIR}"
-    require_contained "${HOME_DIR}"
-
-    log_info "wrapper realpath: $(realpath "${WRAPPER_PATH}")"
-    log_info "wrapper sha256: $(sha256sum "${WRAPPER_PATH}" | awk '{print $1}')"
-
-    local output
-    output="$(HOME="${HOME_DIR}" \
-        PI_POD_LEAN_BASE_DIR="${BASE_DIR}" \
-        PI_POD_LEAN_PROFILE_DIR="${PROFILE_DIR}" \
-        PI_POD_SKILLS="${EXPECTED_SKILL}" \
-        "${WRAPPER_PATH}" --dry-run -- --provider openai-codex --model gpt-5.5 -- 'preflight prompt')"
-
-    [[ "${output}" == PI_CODING_AGENT_DIR=* ]] || { log_error "dry-run missing PI_CODING_AGENT_DIR prefix"; echo "${output}" >&2; exit 1; }
-    [[ "${output}" == *" pi --no-skills "* ]] || { log_error "dry-run missing lean pi command"; echo "${output}" >&2; exit 1; }
-    [[ "${output}" == *"--provider openai-codex"* ]] || { log_error "dry-run missing provider args"; echo "${output}" >&2; exit 1; }
-    [[ "${output}" == *"--model gpt-5.5"* ]] || { log_error "dry-run missing model args"; echo "${output}" >&2; exit 1; }
-
-    while IFS= read -r link; do
-        [[ -L "${link}" ]] || continue
-        local target
-        target="$(realpath "${link}")"
-        case "${target}" in
-            "${TMP_DIR}"|"${TMP_DIR}"/*) ;;
-            *) log_error "profile symlink escapes temp sandbox: ${link} -> ${target}"; exit 1 ;;
-        esac
-    done < <(find "${PROFILE_DIR}" -type l -print)
-
-    log_info "preflight passed"
-    exit 0
-}
-
-main "$@"
 ```
 
 - [ ] **Step 2: Create the redacted daemon-state inspection script**
 
-Create `tools/pi-lean/inspect-pod-daemon-redacted.sh`:
+Create `tools/pi-lean/inspect-pod-daemon-redacted.sh`. It must support `--syntax-only` by exiting 0 before touching the filesystem. The helper is safe for command-shape inspection, not prompt-content inspection.
 
-```bash
-#!/bin/bash
-set -euo pipefail
+Update the Python redaction snippet so `args` is summarized:
 
-log_info()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO:  $*"; }
-log_warn()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN:  $*" >&2; }
-log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2; }
+```python
+SECRET_MARKERS = ("token", "key", "auth", "password", "secret")
+STRUCTURAL_VALUE_FLAGS = {"--skill", "--provider", "--model"}
 
-cleanup() {
-    local exit_code=$?
-    [[ ${exit_code} -ne 0 ]] && log_error "Failed with exit code ${exit_code}"
-}
-trap 'cleanup' EXIT
+def has_secret_marker(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker in lowered for marker in SECRET_MARKERS)
 
-main() {
-    [[ $# -eq 1 ]] || { log_error "Usage: inspect-pod-daemon-redacted.sh <sandbox-path>"; exit 1; }
-    local sandbox_path="$1"
-    local state_path="${sandbox_path}/pod_daemon.json"
-    [[ -f "${state_path}" ]] || { log_error "missing state file: ${state_path}"; exit 1; }
+def is_secret_assignment(value: str) -> bool:
+    if "=" not in value:
+        return False
+    key, _ = value.split("=", 1)
+    return has_secret_marker(key)
 
-    python3 - "${state_path}" <<'PY'
-import json
-import sys
+def redact_assignment(value: str) -> str:
+    key, _ = value.split("=", 1)
+    return f"{key}=<redacted>"
 
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as fh:
-    state = json.load(fh)
+def is_secret_flag(value: str) -> bool:
+    return value.startswith("--") and has_secret_marker(value.split("=", 1)[0])
 
-def redact_env(items):
+def redact_args(items):
+    args = [str(item) for item in (items or [])]
+    delimiter_positions = [index for index, value in enumerate(args) if value == "--"]
+    final_delimiter = delimiter_positions[-1] if delimiter_positions else -1
+    limit = final_delimiter + 1 if final_delimiter >= 0 else len(args)
     safe = []
-    for item in items or []:
-        key = item.split("=", 1)[0]
-        if any(secret in key.upper() for secret in ("TOKEN", "KEY", "SECRET", "AUTH", "PASSWORD")):
-            safe.append(f"{key}=<redacted>")
-        elif key in ("PI_CODING_AGENT_DIR", "PI_POD_LEAN_BASE_DIR", "PI_POD_LEAN_PROFILE_DIR", "PI_POD_SKILLS", "HOME", "PATH"):
-            safe.append(item)
+    index = 0
+    while index < limit:
+        value = args[index]
+        if is_secret_assignment(value):
+            safe.append(redact_assignment(value))
+            index += 1
+            continue
+        if is_secret_flag(value):
+            safe.append(value)
+            if index + 1 < limit and "=" not in value:
+                safe.append("<redacted>")
+                index += 2
+                continue
+            index += 1
+            continue
+        safe.append(value)
+        if value in STRUCTURAL_VALUE_FLAGS and index + 1 < limit:
+            safe.append(args[index + 1])
+            index += 2
+            continue
+        index += 1
+    if final_delimiter >= 0 and final_delimiter < len(args) - 1:
+        safe.append("<prompt redacted>")
     return safe
-
-safe_state = {
-    "pod_key": state.get("pod_key"),
-    "agent": state.get("agent"),
-    "sandbox_path": state.get("sandbox_path"),
-    "work_dir": state.get("work_dir"),
-    "command": state.get("command"),
-    "args": state.get("args", []),
-    "env": redact_env(state.get("env", [])),
-    "perpetual": state.get("perpetual", False),
-    "started_at": state.get("started_at"),
-}
-print(json.dumps(safe_state, indent=2, sort_keys=True))
-PY
-    exit 0
-}
-
-main "$@"
 ```
 
-- [ ] **Step 3: Make both scripts executable**
+Redaction must happen before appending a raw arg. The helper must cover split forms such as `--api-key secret`, inline forms such as `--api-key=secret`, and environment-style arg strings such as `OPENAI_API_KEY=secret`.
+
+Use `"args": redact_args(state.get("args", []))` in `safe_state`. Keep the existing env redaction.
+
+- [ ] **Step 3: Add concrete Bazel shell-test wiring**
+
+Create `tools/pi-lean/BUILD.bazel`:
+
+```python
+sh_test(
+    name = "preflight_syntax_test",
+    srcs = ["preflight.sh"],
+    args = ["--syntax-only"],
+)
+
+sh_test(
+    name = "inspect_pod_daemon_redacted_syntax_test",
+    srcs = ["inspect-pod-daemon-redacted.sh"],
+    args = ["--syntax-only"],
+)
+```
+
+Both shell scripts must support `--syntax-only` by exiting 0 after Bash parses function definitions and before touching the filesystem.
+
+- [ ] **Step 4: Make both scripts executable**
 
 Run:
 
@@ -1287,15 +1006,18 @@ chmod +x tools/pi-lean/preflight.sh tools/pi-lean/inspect-pod-daemon-redacted.sh
 
 Expected: command exits 0.
 
-- [ ] **Step 4: Run non-live script checks**
+- [ ] **Step 5: Run non-live script checks**
 
 Run:
 
 ```bash
 bash -n tools/pi-lean/preflight.sh
 bash -n tools/pi-lean/inspect-pod-daemon-redacted.sh
-tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean
+bazel test //tools/pi-lean:preflight_syntax_test //tools/pi-lean:inspect_pod_daemon_redacted_syntax_test
+EXPECTED_WRAPPER_SHA256=<hash> EXPECTED_WRAPPER_OWNER="$(id -un)" EXPECTED_WRAPPER_GROUP="$(id -gn)" tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean
 ```
+
+Set `EXPECTED_WRAPPER_MODE=<mode>` only when an exact wrapper file mode is part of the local approval. If the observed wrapper or checked parent dirs are group/world writable, fix permissions first or rerun with `ALLOW_GROUP_WRITABLE_WRAPPER=operator-approved-0770` after operator approval.
 
 Expected:
 
@@ -1303,9 +1025,9 @@ Expected:
 preflight passed
 ```
 
-The command may print timestamped info lines and the wrapper hash before that final line. It must not create a pod, call AgentsMesh APIs, write DB state, rebuild images, or deploy.
+The command may print timestamped info lines before that final line. It must not create a pod, call AgentsMesh APIs, write DB state, rebuild images, or deploy.
 
-- [ ] **Step 5: Add a local fixture check for redaction**
+- [ ] **Step 6: Add a local fixture check for redaction**
 
 Run:
 
@@ -1318,7 +1040,7 @@ cat > "${tmpdir}/pod_daemon.json" <<'JSON'
   "sandbox_path": "/tmp/pi-lean-check",
   "work_dir": "/tmp/pi-lean-check/work",
   "command": "/opt/agentsmesh/bin/pi-pod-lean",
-  "args": ["--skill", "agentsmesh", "--", "--provider", "openai-codex", "--", "hello"],
+  "args": ["--skill", "agentsmesh", "--", "--provider", "openai-codex", "--api-key", "secret", "--auth-token=secret", "OPENAI_API_KEY=secret", "--", "hello prompt"],
   "env": ["PI_CODING_AGENT_DIR=/tmp/pi-lean-check/pi-home", "OPENAI_API_KEY=secret", "AUTH_TOKEN=secret", "PI_POD_SKILLS=agentsmesh"],
   "perpetual": false,
   "started_at": "2026-06-24T00:00:00Z"
@@ -1326,20 +1048,20 @@ cat > "${tmpdir}/pod_daemon.json" <<'JSON'
 JSON
 tools/pi-lean/inspect-pod-daemon-redacted.sh "${tmpdir}" | tee "${tmpdir}/redacted.json"
 grep -q '<redacted>' "${tmpdir}/redacted.json"
+grep -q '<prompt redacted>' "${tmpdir}/redacted.json"
 ! grep -q 'secret' "${tmpdir}/redacted.json"
-rm -rf "${tmpdir}"
+! grep -q 'hello prompt' "${tmpdir}/redacted.json"
+python3 -c 'import shutil, sys; shutil.rmtree(sys.argv[1])' "${tmpdir}"
 ```
 
 Expected: command exits 0.
 
-- [ ] **Step 6: Commit Task 5**
+- [ ] **Step 7: Commit Task 5**
 
 ```bash
-git add tools/pi-lean/preflight.sh tools/pi-lean/inspect-pod-daemon-redacted.sh
+git add tools/pi-lean/preflight.sh tools/pi-lean/inspect-pod-daemon-redacted.sh tools/pi-lean/BUILD.bazel
 git commit -m "chore(pi): add lean pod validation helpers"
 ```
-
-If you add `tools/pi-lean/BUILD.bazel`, include it in the same commit.
 
 ---
 
@@ -1353,6 +1075,14 @@ If you add `tools/pi-lean/BUILD.bazel`, include it in the same commit.
 - Consumes: completed Task 1 to Task 5 commits.
 - Produces: a green, non-live implementation branch ready for adversarial code review, but still not authorized for live pod creation.
 
+**Base-ref precondition:** After the Rev 2 plan commit lands and before Task 1 implementation starts, capture the implementation base:
+
+```bash
+export IMPLEMENTATION_BASE_SHA="$(git rev-parse HEAD)"
+```
+
+Record that value in the implementation handoff. Final scans use this explicit base ref so they do not scan unrelated pre-existing tree content.
+
 - [ ] **Step 1: Run focused tests**
 
 Run:
@@ -1363,7 +1093,8 @@ bazel test //backend/internal/service/agentpod:agentpod_test --test_filter=TestE
 bazel test //backend/internal/service/agent:agent_test --test_filter='TestConfigBuilder_PiLeanMergedSource.*'
 bazel test //runner/internal/agents/pi:pi_test
 bazel test //runner/internal/tokenusage:tokenusage_test --test_filter='Test(GetParser|Collect_PiLeanActualLaunchCommand|RegisteredParsers_HaveFixtureProducingNonZeroTokens|RegistryCoverage_EveryNonOptOutParserHasFixture)'
-bazel test //runner/internal/runner:runner_test --test_filter='TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter|TestPrepareAgentHome(RejectsCopiedSymlinkEscape|AllowsContainedSymlink)'
+bazel test //runner/internal/runner:runner_test --test_filter='TestPodBuilderResolveLaunchInputs_PiLeanPromptDelimiter|TestPrepareAgentHome(RejectsEnvPathOutsideSandboxBeforeCreation|RejectsCopiedSymlinkEscape|AllowsContainedSymlink)'
+bazel test //tools/pi-lean:preflight_syntax_test //tools/pi-lean:inspect_pod_daemon_redacted_syntax_test
 ```
 
 Expected: all PASS.
@@ -1376,6 +1107,7 @@ Run:
 bazel test //agentfile/...
 bazel test //backend/internal/service/agent:agent_test //backend/internal/service/agentpod:agentpod_test
 bazel test //runner/internal/agents/pi:pi_test //runner/internal/tokenusage:tokenusage_test //runner/internal/runner:runner_test
+bazel test //tools/pi-lean:preflight_syntax_test //tools/pi-lean:inspect_pod_daemon_redacted_syntax_test
 ```
 
 Expected: all PASS. If `//runner/internal/runner:runner_test` exposes unrelated pre-existing flakes, capture the exact failing test and run the focused Task 4 filters again before escalating.
@@ -1387,23 +1119,49 @@ Run:
 ```bash
 bash -n tools/pi-lean/preflight.sh
 bash -n tools/pi-lean/inspect-pod-daemon-redacted.sh
-tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean
+EXPECTED_WRAPPER_SHA256=<hash> EXPECTED_WRAPPER_OWNER="$(id -un)" EXPECTED_WRAPPER_GROUP="$(id -gn)" tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean
 ```
 
 Expected: all commands exit 0; preflight prints `preflight passed`.
 
-- [ ] **Step 4: Scan for forbidden placeholders and long dashes**
+- [ ] **Step 4: Scan forbidden placeholders and long dashes only in changed or plan-owned files**
 
 Run:
 
 ```bash
-if grep -RInE 'T[B]D|T[O]DO|implement[[:space:]]+later|fill[[:space:]]+in[[:space:]]+details' docs/superpowers/plans/2026-06-24-pi-lean-pod-agent.md agentfile backend runner tools/pi-lean 2>/dev/null; then exit 1; fi
-if grep -RInP '[\x{2013}\x{2014}]' docs/superpowers/plans/2026-06-24-pi-lean-pod-agent.md agentfile backend runner tools/pi-lean 2>/dev/null; then exit 1; fi
+mapfile -d '' -t changed_files < <(git diff -z --name-only "${IMPLEMENTATION_BASE_SHA}..HEAD" -- agentfile backend runner tools/pi-lean docs/superpowers/plans/2026-06-24-pi-lean-pod-agent.md docs/superpowers/specs/2026-06-24-pi-lean-pod-agent-design.md)
+scan_files_tmp="$(mktemp)"
+trap 'rm -f "${scan_files_tmp}"' EXIT
+printf '%s\0' 'docs/superpowers/plans/2026-06-24-pi-lean-pod-agent.md' "${changed_files[@]}" | sort -zu > "${scan_files_tmp}"
+
+placeholder_found=0
+while IFS= read -r -d '' file; do
+    [[ -f "${file}" ]] || continue
+    if grep -nE 'T[B]D|T[O]DO|implement[[:space:]]+later|fill[[:space:]]+in[[:space:]]+details' -- "${file}"; then
+        placeholder_found=1
+    else
+        status=$?
+        [[ ${status} -eq 1 ]] || exit "${status}"
+    fi
+done < "${scan_files_tmp}"
+[[ ${placeholder_found} -eq 0 ]] || exit 1
+
+long_dash_found=0
+while IFS= read -r -d '' file; do
+    [[ -f "${file}" ]] || continue
+    if grep -nP '[\x{2013}\x{2014}]' -- "${file}"; then
+        long_dash_found=1
+    else
+        status=$?
+        [[ ${status} -eq 1 ]] || exit "${status}"
+    fi
+done < "${scan_files_tmp}"
+[[ ${long_dash_found} -eq 0 ]] || exit 1
 ```
 
-Expected: no output.
+Expected: no output and exit 0. This path-safe form avoids `xargs` status ambiguity: grep exit 1 means no matches, grep exit greater than 1 is a real error and fails the step, and any match sets a flag that fails after all files are reported. This replaces tree-wide scans over `agentfile backend runner`. The scan target set is the plan file plus files changed by the implementation branch relative to `IMPLEMENTATION_BASE_SHA`.
 
-- [ ] **Step 5: Confirm no live operations happened**
+- [ ] **Step 5: Record working-tree state and process attestation**
 
 Run:
 
@@ -1411,7 +1169,7 @@ Run:
 git status --short
 ```
 
-Expected: only intentional code, tests, docs, and tool files are modified or committed. There must be no backend/web image rebuild, no DB migration application, no pod creation artifact from the live AgentsMesh stack, and no deployment change.
+Expected: only intentional code, tests, docs, and tool files are modified or committed. `git status` proves repository state only. Absence of pod creation, DB writes, backend/web rebuilds, and deploys is enforced by command discipline plus operator/process attestation unless a future revision adds a specific runtime log check.
 
 - [ ] **Step 6: Commit Task 6 only if docs changed**
 
@@ -1434,14 +1192,21 @@ Do not execute this appendix during plan implementation. It is written here only
 
 After that exact token, the authorized scope is one laptop-runner pod only:
 
-1. Run `tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean`.
+1. Run `tools/pi-lean/preflight.sh /home/malfirg/programming_projects/pi-config/bin/pi-pod-lean` with `EXPECTED_WRAPPER_SHA256=<hash>` and any approved owner/group/mode variables.
 2. Resolve the laptop runner ID explicitly from the safe backend/UI path chosen by the operator. Do not auto-select a runner.
 3. Create exactly one non-perpetual pod with fixed alias `pi-lean-validation-2026-06-24`, `agent_slug=pi-cli`, explicit `runner_id=<laptop runner id>`, and the canonical lean AgentFile layer.
 4. Inspect daemon state only through `tools/pi-lean/inspect-pod-daemon-redacted.sh <sandbox-path>`.
 5. Verify command, args, pre-exec env, workdir, `<sandbox>/pi-home`, and `<sandbox>/pi-lean-home/sessions`.
 6. Verify token usage collection through the actual launch key.
-7. Terminate the pod and remove only that pod's sandbox after token usage is collected.
-8. If any check fails, terminate by pod key and inspect only redacted logs.
+7. Before sandbox cleanup, verify all cleanup guards:
+   - Redacted daemon metadata `pod_key` equals `pi-lean-validation-2026-06-24`.
+   - Sandbox path is non-empty.
+   - Sandbox realpath is under the laptop runner workspace root chosen by the operator.
+   - Sandbox path belongs to the fixed pod key.
+   - Token usage collection has been verified.
+   - Cleanup command uses no globs.
+8. Terminate the pod and remove only that pod's sandbox after token usage is collected and the cleanup guards pass.
+9. If any check fails, terminate by pod key and inspect only redacted logs.
 
 Hetzner validation, production deployment, backend image rebuild, and web image rebuild remain out of scope.
 
@@ -1461,6 +1226,31 @@ Code rollback:
 - Revert the task commit that introduced the issue.
 - If reverting Task 3 after a live validation ever happened, do not remove parser aliases until all lean pods have terminated and token usage has been collected.
 - Do not alter `backend/migrations/000160_add_pi_agent.up.sql` as part of this plan.
+
+---
+
+## Resolutions Applied in Rev 3
+
+- R2-COR-01 applied: Task 3 now defines parser helper contracts and snippets for `pathContained` and `relativeDepth`, removes the undefined `symlinkPointsToDir` call, and clarifies symlink handling without unsafe `SkipDir` use on symlink file entries.
+- R2-TEST-01 applied: Task 6 now uses a path-safe `git diff -z` and loop-based grep scan that distinguishes no-match from real grep errors instead of masking failures through `xargs` fallback semantics.
+- R2-SEC-01 applied: Task 5 now redacts split secret flags, inline secret assignments such as `--api-key=secret`, and environment-style arg strings before appending raw argv values. The fixture covers split, inline, and environment-style secret forms.
+- Cross-model review applied: headless Sonnet reviewed the Rev 3 diff and returned PASS with no blockers. Non-blocking notes did not require plan edits.
+
+---
+
+## Resolutions Applied in Rev 2
+
+- C1 applied: Task 3 now covers dual session roots, pi-home symlink escape rejection, non-regular files, symlink directories, visited-entry budget, max depth, max accepted files, max single-file bytes, and max total bytes. Parser snippets increment visited entries before suffix filtering and reject symlinks before parsing.
+- C2 applied: Task 4 now uses two-stage agent-home validation. `validateAgentHomeTarget` runs before writes or cleanup, and `validateAgentHomeContained` walks the created tree after copy or mkdir.
+- C3 applied: Task 5 separates validated facts from operator-reviewed facts and requires wrapper realpath, owner, group, mode, parent-dir mode, hash, dry-run shape, and resolved skill path containment checks.
+- C4 applied: Task 5 redacts daemon argv after the final prompt delimiter and redacts values following secret-looking flags. The helper is scoped to command-shape inspection.
+- C5 applied: Task 5 keeps `tools/pi-lean/BUILD.bazel` and defines concrete `sh_test` syntax targets. Task 5 and Task 6 run those targets.
+- C6 applied: Task 6 captures `IMPLEMENTATION_BASE_SHA` and scans only the plan plus files changed by the implementation branch under the explicit path set.
+- C7 applied: Task 6 treats `git status --short` as repository-state evidence only and records live-operation absence through command discipline plus operator/process attestation.
+- C8 applied: the gated live appendix now requires fixed pod-key, non-empty sandbox, runner-root containment, fixed-pod path ownership, no-glob cleanup, and verified token usage before sandbox removal.
+- C9 applied: Task 1 documents `REMOVE arg` as first-literal merge-time base-statement replacement, limited here to `--provider` and `--model`.
+- Deferred: F-TEST-06 and F-SEC-08 remain review-context artifacts about missing `/home/malfirg/programming_projects/AgentsMesh/plan.md` and `progress.md`, not defects in this plan. No plan change.
+- Deferred: cross-model review is outside this edit. Status remains awaiting cross-model review.
 
 ---
 

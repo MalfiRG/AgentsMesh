@@ -1,6 +1,6 @@
 # Lean Pi Pod Agent Design
 
-Status: Rev 2 after adversarial review - blocked before implementation planning.
+Status: Rev 2 after adversarial review - implementation plan Rev 3 reviewed; live validation remains gated.
 Review report: `docs/superpowers/reviews/2026-06-24-pi-lean-pod-agent-adversarial-review.md`.
 Provenance: this file is the Rev 2 output edited in this run.
 
