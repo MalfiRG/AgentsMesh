@@ -95,6 +95,24 @@ func TestCreateOSCHandler_OSC9(t *testing.T) {
 	}
 }
 
+func TestCreateOSCHandler_OSC9ProgressSuppressed(t *testing.T) {
+	store := NewInMemoryPodStore()
+	mockConn := client.NewMockConnection()
+	runner := &Runner{cfg: &config.Config{}}
+	handler := NewRunnerMessageHandler(runner, store, mockConn)
+	oscHandler := handler.createOSCHandler("test-pod")
+
+	// ConEmu/Windows-Terminal progress (`9;4;state;pct`) and bare `9;4` are
+	// control sub-protocol, not toasts - must not emit notifications.
+	oscHandler(9, []string{"4", "1", "50"})
+	oscHandler(9, []string{"4"})
+	oscHandler(9, []string{"9", "/some/path"})
+
+	if events := mockConn.GetEvents(); len(events) != 0 {
+		t.Fatalf("expected 0 events for OSC 9 control subcommands, got %d", len(events))
+	}
+}
+
 func TestCreateOSCHandler_OSC0Title(t *testing.T) {
 	store := NewInMemoryPodStore()
 	mockConn := client.NewMockConnection()

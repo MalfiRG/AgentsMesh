@@ -24,6 +24,7 @@ export function handleNotificationEvent(
   if (showToast) {
     const toastFn = data.priority === "high" ? toast.warning : toast.info;
     toastFn(data.title, {
+      id: `notif:${data.source}:${data.title}:${data.body}:${data.link ?? ""}`,
       description: data.body,
       duration: data.priority === "high" ? 8000 : 4000,
       ...(data.link ? { action: { label: "→", onClick: () => opts.router.push(data.link) } } : {}),
