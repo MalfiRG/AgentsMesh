@@ -82,6 +82,18 @@ describe("handleNotificationEvent", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
+  it("uses a stable toast id so repeated identical notifications collapse into one", () => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    const opts = makeOpts();
+    const evt = makeEvent({ toast: true, browser: false }, "normal", "/x");
+    handleNotificationEvent(evt, opts);
+    handleNotificationEvent(evt, opts);
+    const idA = (toast.info as ReturnType<typeof vi.fn>).mock.calls[0][1].id;
+    const idB = (toast.info as ReturnType<typeof vi.fn>).mock.calls[1][1].id;
+    expect(idA).toBe(idB);
+    expect(idA).toBe("notif:test:Test:Body:/x");
+  });
+
   it("shows nothing when both channels disabled", () => {
     const opts = makeOpts();
     handleNotificationEvent(makeEvent({ toast: false, browser: false }), opts);
