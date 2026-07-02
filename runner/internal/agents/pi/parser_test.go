@@ -1,6 +1,8 @@
 package pi
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,6 +35,20 @@ func TestPiParser_ScansLeanProfileDir(t *testing.T) {
 	require.NotNil(t, usage, "lean wrapper sessions under pi-lean-home must be counted")
 	require.False(t, usage.IsEmpty())
 	assert.NotNil(t, usage.Models["gpt-5.5"])
+}
+
+func TestPiParser_IgnoresSymlinkedSessionFile(t *testing.T) {
+	sandbox := testsupport.BuildLeanFixtureSandbox(t)
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	require.NoError(t, os.WriteFile(outside,
+		[]byte(`{"type":"message","message":{"model":"gpt-9","usage":{"input":999}}}`), 0o644))
+	link := filepath.Join(sandbox, "pi-lean-home", "sessions", "--fixture--", "link.jsonl")
+	require.NoError(t, os.Symlink(outside, link))
+
+	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Nil(t, usage.Models["gpt-9"], "symlinked session file must not be parsed")
 }
 
 func TestPiParser_NoSessions_ReturnsNil(t *testing.T) {
