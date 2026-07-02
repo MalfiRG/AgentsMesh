@@ -49,6 +49,7 @@ func TestPiParser_IgnoresSymlinkedSessionFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Nil(t, usage.Models["gpt-9"], "symlinked session file must not be parsed")
+	assert.NotNil(t, usage.Models["gpt-5.5"], "legitimate sessions must still be parsed")
 }
 
 func TestPiParser_NoSessions_ReturnsNil(t *testing.T) {
