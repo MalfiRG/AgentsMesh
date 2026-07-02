@@ -25,6 +25,16 @@ func TestPiParser_SumsAssistantUsageByModel(t *testing.T) {
 	assert.Equal(t, int64(1024), m.CacheCreationTokens)
 }
 
+func TestPiParser_ScansLeanProfileDir(t *testing.T) {
+	sandbox := testsupport.BuildLeanFixtureSandbox(t)
+
+	usage, err := (&piParser{}).Parse(sandbox, time.Unix(0, 0))
+	require.NoError(t, err)
+	require.NotNil(t, usage, "lean wrapper sessions under pi-lean-home must be counted")
+	require.False(t, usage.IsEmpty())
+	assert.NotNil(t, usage.Models["gpt-5.5"])
+}
+
 func TestPiParser_NoSessions_ReturnsNil(t *testing.T) {
 	usage, err := (&piParser{}).Parse(t.TempDir(), time.Unix(0, 0))
 	require.NoError(t, err)

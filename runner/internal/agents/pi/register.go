@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	tokenusage.RegisterParser([]string{"pi", "pi-cli"}, &piParser{})
+	tokenusage.RegisterParser([]string{"pi", "pi-cli", "pi-pod-lean", "pi-lean-cli"}, &piParser{})
 
 	// pi reads its config (incl. auth.json) and writes sessions under
 	// PI_CODING_AGENT_DIR; isolate it per-pod so credentials and token
