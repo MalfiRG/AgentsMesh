@@ -61,6 +61,38 @@ func evalMergedLayer(t *testing.T, baseSrc, layerSrc string) *runnerv1.CreatePod
 	return buildResultToProto(req, ctx.Result)
 }
 
+// piLeanDurableAgentfile mirrors the agentfile_source seeded for the durable
+// pi-lean-cli agent by migration 000161. Keep in sync with that migration.
+const piLeanDurableAgentfile = `AGENT pi-pod-lean
+EXECUTABLE pi-pod-lean
+MODE pty
+CONFIG model SELECT("gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark") = "gpt-5.5"
+ENV OPENAI_API_KEY SECRET OPTIONAL
+ENV PI_CODING_AGENT_DIR = sandbox.root + "/pi-home"
+ENV PI_POD_LEAN_BASE_DIR = sandbox.root + "/pi-home"
+ENV PI_POD_LEAN_PROFILE_DIR = sandbox.root + "/pi-lean-home"
+PROMPT_POSITION append
+arg "--provider" "openai-codex"
+arg "--model" config.model when config.model != ""
+arg "--"
+`
+
+// TestAgentfilePiLeanDurable_EvalsToLeanSpec guards the migration-seeded agent:
+// its baked agentfile_source alone (no user layer) must eval to the lean spec.
+func TestAgentfilePiLeanDurable_EvalsToLeanSpec(t *testing.T) {
+	cmd := evalMergedLayer(t, piLeanDurableAgentfile, "MODE pty\n")
+
+	assert.Equal(t, "pi-pod-lean", cmd.LaunchCommand)
+	root := PlaceholderSandboxRoot
+	assert.Equal(t, root+"/pi-home", cmd.EnvVars["PI_CODING_AGENT_DIR"])
+	assert.Equal(t, root+"/pi-home", cmd.EnvVars["PI_POD_LEAN_BASE_DIR"])
+	assert.Equal(t, root+"/pi-lean-home", cmd.EnvVars["PI_POD_LEAN_PROFILE_DIR"])
+	assert.Equal(t, "append", cmd.PromptPosition)
+	assert.Subset(t, cmd.LaunchArgs, []string{"--provider", "openai-codex", "--model", "gpt-5.5"})
+	require.NotEmpty(t, cmd.LaunchArgs)
+	assert.Equal(t, "--", cmd.LaunchArgs[len(cmd.LaunchArgs)-1])
+}
+
 func TestAgentfileLeanLayer_ProducesLeanLaunchSpec(t *testing.T) {
 	cmd := evalMergedLayer(t, piCLIBaseAgentfile, piLeanLayer)
 
