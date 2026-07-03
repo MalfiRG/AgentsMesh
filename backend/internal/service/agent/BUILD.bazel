@@ -40,6 +40,7 @@ go_test(
     name = "agent_test",
     srcs = [
         "agent_service_test.go",
+        "config_builder_pilean_test.go",
         "config_builder_schema_test.go",
         "custom_agent_test.go",
         "message_service_delivery_test.go",
@@ -51,9 +52,15 @@ go_test(
     ],
     embed = [":agent"],
     deps = [
+        "//agentfile/eval",
+        "//agentfile/merge",
+        "//agentfile/parser",
+        "//agentfile/resolve",
+        "//agentfile/serialize",
         "//backend/internal/domain/agent",
         "//backend/internal/infra",
         "//backend/internal/testkit",
+        "//proto/runner/v1:runner_go_proto",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@io_gorm_driver_sqlite//:sqlite",
