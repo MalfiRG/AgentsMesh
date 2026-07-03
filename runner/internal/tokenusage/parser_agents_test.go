@@ -18,6 +18,7 @@ import (
 	"github.com/anthropics/agentsmesh/runner/internal/agents/claude"
 	_ "github.com/anthropics/agentsmesh/runner/internal/agents/codex"
 	_ "github.com/anthropics/agentsmesh/runner/internal/agents/opencode"
+	_ "github.com/anthropics/agentsmesh/runner/internal/agents/pi"
 	"github.com/anthropics/agentsmesh/runner/internal/tokenusage"
 )
 
@@ -34,6 +35,10 @@ func TestGetParser(t *testing.T) {
 		{"codex-cli", false},
 		{"aider", false},
 		{"opencode", false},
+		{"pi", false},
+		{"pi-cli", false},
+		{"pi-pod-lean", false},
+		{"pi-lean-cli", false},
 		{"unknown-agent", true},
 		{"/usr/bin/claude", false},
 		{"C:\\bin\\claude", false},

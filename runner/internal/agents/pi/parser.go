@@ -31,20 +31,42 @@ type piEntry struct {
 }
 
 // Parse sums per-message token usage from pi session JSONL in the pod-local
-// config dir (PI_CODING_AGENT_DIR, materialized at <sandbox>/pi-home by the
-// agentfile + RegisterAgentHome). Sessions land under that dir's sessions/.
+// config dirs. pi-cli writes under <sandbox>/pi-home; the lean wrapper
+// (pi-pod-lean / pi-lean-cli) runs with a separate PI_POD_LEAN_PROFILE_DIR at
+// <sandbox>/pi-lean-home, so both roots must be scanned.
 func (p *piParser) Parse(sandboxPath string, podStartedAt time.Time) (*tokenusage.TokenUsage, error) {
 	usage := tokenusage.NewTokenUsage()
 	if sandboxPath == "" {
 		return nil, nil
 	}
-	sessionsDir := filepath.Join(sandboxPath, "pi-home", "sessions")
-	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
+
+	for _, home := range []string{"pi-home", "pi-lean-home"} {
+		p.scanSessionsDir(filepath.Join(sandboxPath, home, "sessions"), podStartedAt, usage)
+	}
+
+	if usage.IsEmpty() {
 		return nil, nil
+	}
+	return usage, nil
+}
+
+func (p *piParser) scanSessionsDir(sessionsDir string, podStartedAt time.Time, usage *tokenusage.TokenUsage) {
+	if _, err := os.Stat(sessionsDir); err != nil {
+		if !os.IsNotExist(err) {
+			logger.Pod().Warn("Pi parser: sessions dir stat error", "dir", sessionsDir, "error", err)
+		}
+		return
 	}
 
 	walkErr := filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+		if err != nil {
+			logger.Pod().Warn("Pi parser: walk entry error", "path", path, "error", err)
+			return nil
+		}
+		// Reject non-regular files: the pod-writable session dir can hold a
+		// .jsonl symlink (os.Open follows it, reading outside the sandbox) or
+		// a FIFO (os.Open blocks the synchronous shutdown-time collection).
+		if d.IsDir() || !d.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
 		if !tokenusage.IsModifiedAfter(path, podStartedAt) {
@@ -58,11 +80,6 @@ func (p *piParser) Parse(sandboxPath string, podStartedAt time.Time) (*tokenusag
 	if walkErr != nil {
 		logger.Pod().Warn("Pi parser: walk error", "dir", sessionsDir, "error", walkErr)
 	}
-
-	if usage.IsEmpty() {
-		return nil, nil
-	}
-	return usage, nil
 }
 
 func parsePiSessionFile(path string, usage *tokenusage.TokenUsage) error {
