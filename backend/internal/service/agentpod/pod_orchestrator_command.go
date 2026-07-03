@@ -7,7 +7,19 @@ import (
 	runnerv1 "github.com/anthropics/agentsmesh/proto/gen/go/runner/v1"
 
 	podDomain "github.com/anthropics/agentsmesh/backend/internal/domain/agentpod"
+	ticketDomain "github.com/anthropics/agentsmesh/backend/internal/domain/ticket"
 )
+
+func ticketLabelNames(t *ticketDomain.Ticket) []string {
+	if len(t.Labels) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(t.Labels))
+	for _, l := range t.Labels {
+		names = append(names, l.Name)
+	}
+	return names
+}
 
 func (o *PodOrchestrator) buildPodCommand(
 	ctx context.Context,
@@ -49,13 +61,16 @@ func (o *PodOrchestrator) buildPodCommand(
 	}
 
 	ticketSlug := ""
-	if req.TicketSlug != nil && *req.TicketSlug != "" {
-		ticketSlug = *req.TicketSlug
-	} else if req.TicketID != nil && o.ticketService != nil {
+	var ticketLabels []string
+	if req.TicketID != nil && o.ticketService != nil {
 		t, err := o.ticketService.GetTicket(ctx, *req.TicketID)
 		if err == nil && t != nil {
 			ticketSlug = t.Slug
+			ticketLabels = ticketLabelNames(t)
 		}
+	}
+	if ticketSlug == "" && req.TicketSlug != nil {
+		ticketSlug = *req.TicketSlug
 	}
 
 	credentialType, gitToken, sshPrivateKey := "", "", ""
@@ -100,6 +115,7 @@ func (o *PodOrchestrator) buildPodCommand(
 		GitToken:            gitToken,
 		SSHPrivateKey:       sshPrivateKey,
 		TicketSlug:          ticketSlug,
+		TicketLabels:        ticketLabels,
 		PreparationScript:   preparationScript,
 		PreparationTimeout:  preparationTimeout,
 		LocalPath:           localPath,

@@ -32,11 +32,24 @@ func buildEvalContext(
 		"pod": map[string]interface{}{
 			"key": req.PodKey,
 		},
+		"ticket": map[string]interface{}{
+			"labels": toInterfaceSlice(req.TicketLabels),
+		},
 	}
 
 	ctx := eval.NewContext(vars)
 	ctx.EnvBundles = envBundles
 	return ctx
+}
+
+// toInterfaceSlice adapts []string to the []interface{} the eval builtins
+// (str_join, len) expect for list values.
+func toInterfaceSlice(ss []string) []interface{} {
+	out := make([]interface{}, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
 }
 
 // buildResultToProto converts eval.BuildResult to a CreatePodCommand proto.
