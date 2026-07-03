@@ -40,6 +40,11 @@ type ConfigBuildRequest struct {
 	// Ticket association
 	TicketSlug string
 
+	// TicketLabels are the label names on the associated ticket, exposed to the
+	// AgentFile eval as `ticket.labels` (e.g. lean Pi maps pi-skills:* labels
+	// into PI_POD_LABELS). Empty when the pod has no ticket.
+	TicketLabels []string
+
 	// Preparation script (from AgentFile SETUP or Repository fallback)
 	PreparationScript  string
 	PreparationTimeout int

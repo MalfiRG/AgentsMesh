@@ -37,7 +37,7 @@ arg "--"
 
 // evalMergedLayer replays the production path: merge base+layer
 // (agentfile_extract.go), then eval to a CreatePodCommand (config_builder_*.go).
-func evalMergedLayer(t *testing.T, baseSrc, layerSrc string) *runnerv1.CreatePodCommand {
+func evalMergedLayer(t *testing.T, baseSrc, layerSrc string, ticketLabels ...string) *runnerv1.CreatePodCommand {
 	t.Helper()
 
 	baseProg, errs := parser.Parse(baseSrc)
@@ -53,7 +53,7 @@ func evalMergedLayer(t *testing.T, baseSrc, layerSrc string) *runnerv1.CreatePod
 	prog, errs := parser.Parse(merged)
 	require.Empty(t, errs, "merged parse")
 
-	req := &ConfigBuildRequest{PodKey: "pod-1", MCPPort: 9000}
+	req := &ConfigBuildRequest{PodKey: "pod-1", MCPPort: 9000, TicketLabels: ticketLabels}
 	ctx := buildEvalContext(req, map[string]interface{}{}, map[string]interface{}{}, nil)
 	require.NoError(t, eval.Eval(prog, ctx))
 	eval.ApplyModeArgs(ctx.Result)
@@ -71,6 +71,7 @@ ENV OPENAI_API_KEY SECRET OPTIONAL
 ENV PI_CODING_AGENT_DIR = sandbox.root + "/pi-home"
 ENV PI_POD_LEAN_BASE_DIR = sandbox.root + "/pi-home"
 ENV PI_POD_LEAN_PROFILE_DIR = sandbox.root + "/pi-lean-home"
+ENV PI_POD_LABELS = str_join(ticket.labels, ",") when len(ticket.labels) != 0
 PROMPT_POSITION append
 arg "--provider" "openai-codex"
 arg "--model" config.model when config.model != ""
@@ -91,6 +92,15 @@ func TestAgentfilePiLeanDurable_EvalsToLeanSpec(t *testing.T) {
 	assert.Subset(t, cmd.LaunchArgs, []string{"--provider", "openai-codex", "--model", "gpt-5.5"})
 	require.NotEmpty(t, cmd.LaunchArgs)
 	assert.Equal(t, "--", cmd.LaunchArgs[len(cmd.LaunchArgs)-1])
+
+	_, hasLabels := cmd.EnvVars["PI_POD_LABELS"]
+	assert.False(t, hasLabels, "no ticket -> PI_POD_LABELS must not be set")
+}
+
+func TestAgentfilePiLeanDurable_MapsTicketLabelsToPodLabels(t *testing.T) {
+	cmd := evalMergedLayer(t, piLeanDurableAgentfile, "MODE pty\n", "pi-skills:agentsmesh", "bug")
+	assert.Equal(t, "pi-skills:agentsmesh,bug", cmd.EnvVars["PI_POD_LABELS"],
+		"ticket labels join into PI_POD_LABELS for the lean wrapper")
 }
 
 func TestAgentfileLeanLayer_ProducesLeanLaunchSpec(t *testing.T) {
